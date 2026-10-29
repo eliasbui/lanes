@@ -127,11 +127,18 @@ pub fn host(dir: &Path) {
 }
 
 /// The answer to one message of the extension: `ping` for the popup, `variants` for the resolutions of an HLS video,
-/// and anything else is a download, put in the inbox.
+/// and anything else is a download, put in the inbox. Every answer carries the app's version, which tells the
+/// extension when the app has updated its files (background.js).
 fn answer(dir: &Path, message: &Value) -> Value {
+    let mut reply = reply_to(dir, message);
+    reply["version"] = json!(env!("CARGO_PKG_VERSION"));
+    reply
+}
+
+fn reply_to(dir: &Path, message: &Value) -> Value {
     let invalid = || json!({ "ok": false, "error": "Liên kết không hợp lệ" });
     match message["cmd"].as_str() {
-        Some("ping") => json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }),
+        Some("ping") => json!({ "ok": true }),
         Some("variants") => match Job::from_message(message) {
             Some(job) => match crate::hls::choices(&job.url, &job.headers()) {
                 Ok(choices) => {
@@ -367,7 +374,9 @@ mod tests {
         assert_eq!(pong["ok"], true);
         assert_eq!(pong["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(answer(&dir, &json!({ "cmd": "variants", "url": "file:///etc/passwd" }))["ok"], false);
-        assert_eq!(answer(&dir, &json!({ "url": "ftp://x/a" }))["ok"], false);
+        let refused = answer(&dir, &json!({ "url": "ftp://x/a" }));
+        assert_eq!(refused["ok"], false);
+        assert_eq!(refused["version"], env!("CARGO_PKG_VERSION"), "every answer carries the version");
     }
 
     #[test]

@@ -84,8 +84,8 @@ công bố, rồi thêm lối tắt vào menu Start. Chạy lại lệnh để c
 App mang sẵn tiện ích và ghi nó ra `~/Library/Application Support/Lanes/extension` (macOS) hoặc
 `%APPDATA%\Lanes\extension` (Windows) mỗi lần mở; mục Cài đặt, Tiện ích trình duyệt cho biết thư mục này. Mở
 `chrome://extensions` (hoặc trang tương ứng của Edge, Brave, Cốc Cốc), bật Chế độ nhà phát triển rồi kéo thư mục đó vào
-trang, hoặc bấm "Tải tiện ích đã giải nén" và chọn nó. App làm mới thư mục mỗi khi cập nhật, nên trình duyệt nhận bản
-tiện ích khớp với app ở lần mở sau. Mã tiện ích cố định nhờ khóa trong `extension/manifest.json`, nên Lanes nhận ra nó
+trang, hoặc bấm "Tải tiện ích đã giải nén" và chọn nó. App làm mới thư mục mỗi khi cập nhật, và tiện ích tự tải lại từ
+thư mục đó ngay khi thấy app có phiên bản mới hơn, không cần mở lại trình duyệt. Mã tiện ích cố định nhờ khóa trong `extension/manifest.json`, nên Lanes nhận ra nó
 dù bạn tải từ đâu. Cửa sổ nhỏ của tiện ích cho biết đã kết nối được với app chưa, và bật tắt việc tự nhận download cùng
 nút tải video.
 

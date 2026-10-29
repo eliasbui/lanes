@@ -17,8 +17,11 @@ videoButton.addEventListener("change", () => {
   chrome.storage.local.set({ videoButton: videoButton.checked });
 });
 
-// Whether the app answers, and which version: the extension and the app go together.
-chrome.runtime.sendNativeMessage("com.eliasbui.lanes", { cmd: "ping" }, (reply) => {
-  const ok = !chrome.runtime.lastError && reply?.ok;
-  status.textContent = ok ? `Đã kết nối với Lanes ${reply.version}.` : "Chưa kết nối được với app Lanes. Hãy mở Lanes một lần rồi thử lại.";
-});
+// Whether the app answers, and which version. It goes through the background, which also brings the extension up to
+// the app's version when the app has updated.
+chrome.runtime.sendMessage({ type: "ping" }).then(
+  (reply) => {
+    status.textContent = reply?.ok ? `Đã kết nối với Lanes ${reply.version}.` : "Chưa kết nối được với app Lanes. Hãy mở Lanes một lần rồi thử lại.";
+  },
+  () => (status.textContent = "Chưa kết nối được với app Lanes. Hãy mở Lanes một lần rồi thử lại.")
+);

@@ -86,8 +86,8 @@ publishes, and adds a Start-menu shortcut. Run the same line again to update; re
 The app carries the extension and writes it to `~/Library/Application Support/Lanes/extension` (macOS) or
 `%APPDATA%\Lanes\extension` (Windows) at every start; Settings, Browser extension shows the folder. Open
 `chrome://extensions` (or the Edge, Brave, Cốc Cốc equivalent), turn on Developer mode and drag that folder onto the
-page, or use "Load unpacked". Since the app refreshes the folder when it updates, the browser picks up the matching
-extension at its next start. Its id is fixed by the key in `extension/manifest.json`, so Lanes recognises it
+page, or use "Load unpacked". The app refreshes the folder when it updates, and the extension reloads itself from it
+as soon as the app answers with a newer version, so no browser restart is needed. Its id is fixed by the key in `extension/manifest.json`, so Lanes recognises it
 wherever you load it from. The popup shows whether the extension reaches the app, and turns capture and the video
 button on and off.
 

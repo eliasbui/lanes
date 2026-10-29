@@ -43,9 +43,32 @@ function send(message) {
         resolve({ ok: false, error: "Chưa kết nối được với Lanes. Hãy mở app Lanes một lần để app tự đăng ký với trình duyệt, rồi thử lại." });
       } else {
         resolve(reply);
+        catchUp(reply.version);
       }
     });
   });
+}
+
+// Whether version `a` is above `b`, number by number.
+function newer(a, b) {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  }
+  return false;
+}
+
+// The app rewrites this extension's files when it updates (src/browser.rs). When it answers with a newer version than
+// this one, the extension reloads itself from those files, so the browser need not restart. Once per version: a copy
+// loaded from another folder would come back as the same version, and must not reload again and again. The reload
+// waits a moment so the answer in hand still reaches the page.
+async function catchUp(version) {
+  if (typeof version !== "string" || !newer(version, chrome.runtime.getManifest().version)) return;
+  const { reloadedFor } = await chrome.storage.local.get("reloadedFor");
+  if (reloadedFor === version) return;
+  await chrome.storage.local.set({ reloadedFor: version });
+  setTimeout(() => chrome.runtime.reload(), 3000);
 }
 
 function note(ok, text) {
@@ -246,6 +269,10 @@ async function streams(sender, { sources = [], direct = false, others = [], titl
 }
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message?.type === "ping") {
+    send({ cmd: "ping" }).then(reply);
+    return true;
+  }
   if (message?.type === "streams") {
     streams(sender, message).then(reply, () => reply({ items: [], notes: ["Không đọc được danh sách video."] }));
     return true;
