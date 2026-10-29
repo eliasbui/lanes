@@ -365,7 +365,7 @@ function pageItem(c, reply, url) {
 // What the video button offers for one video. A video playing a file (`direct`) offers its own sources only. A
 // streaming one offers the media its frame loaded (or, when that frame loaded none, the whole tab's), less the files
 // `others` videos play. Each HLS playlist is opened up into its resolutions by the app.
-async function streams(sender, { sources = [], direct = false, others = [], title = "" }) {
+async function streams(sender, { sources = [], direct = false, others = [], title = "", page = "" }) {
   const all = sender.tab ? await mediaOf(sender.tab.id) : [];
   let found = [];
   if (!direct) {
@@ -404,18 +404,20 @@ async function streams(sender, { sources = [], direct = false, others = [], titl
   }
 
   // YouTube, or a page where nothing was found above: the app asks yt-dlp. Elsewhere its failure says no more than
-  // "nothing found", unless yt-dlp is missing.
+  // "nothing found", unless yt-dlp is missing. A YouTube video played away from its own page is read from the page
+  // the button found for it (content.js).
   const youtube = YOUTUBE.test(referrer);
-  if (youtube && !YOUTUBE_VIDEO.test(referrer)) {
+  const target = youtube && !YOUTUBE_VIDEO.test(referrer) && YOUTUBE_VIDEO.test(page) ? page : referrer;
+  if (youtube && !YOUTUBE_VIDEO.test(target)) {
     notes.push("Hãy mở video này ra trang riêng của nó để tải.");
   } else if (youtube || !items.length) {
     // An app before 0.4 does not know "page" and would take it for a download of the page itself.
     const app = await send({ cmd: "ping" });
     const reply = app.ok && newer("0.4.0", app.version || "0")
       ? { ok: false, missing: true, error: "Cập nhật app Lanes lên bản mới nhất để tải video từ trang này." }
-      : app.ok ? await send({ cmd: "page", url: referrer }) : app;
+      : app.ok ? await send({ cmd: "page", url: target }) : app;
     if (reply.ok) {
-      items.push(...reply.choices.map((c) => pageItem(c, reply, referrer)));
+      items.push(...reply.choices.map((c) => pageItem(c, reply, target)));
       if (reply.hint) notes.push(reply.hint);
     } else if (youtube || reply.missing) {
       notes.push(reply.error);

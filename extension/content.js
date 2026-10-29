@@ -293,7 +293,26 @@
     return out;
   }
 
-  const nothingFound = "Chưa thấy bản tải được. Hãy phát video vài giây rồi bấm lại. Video có DRM thì không tải được.";
+  // The own page of a YouTube video played away from it: a preview in a feed, a channel's trailer, the miniplayer. The
+  // player's title link names it; failing that, the nearest links around the player that all lead to one video. Other
+  // links inside the player are the end screen's suggestions, so the search starts outside it.
+  function videoId(href) {
+    const m = /\/watch\?(?:.*&)?v=([\w-]{11})|\/shorts\/([\w-]{11})/.exec(href || "");
+    return m ? m[1] || m[2] : "";
+  }
+
+  function pageOf(v) {
+    const player = v.closest(".html5-video-player") || v;
+    let id = videoId(player.querySelector("a.ytp-title-link")?.href);
+    for (let el = player.parentElement; !id && el; el = el.parentElement) {
+      const ids = new Set([...el.querySelectorAll('a[href*="/watch?"], a[href*="/shorts/"]')].map((a) => videoId(a.href)).filter(Boolean));
+      if (ids.size > 1) break;
+      [id] = ids;
+    }
+    return id ? `https://www.youtube.com/watch?v=${id}` : "";
+  }
+
+  const nothingFound ="Chưa thấy bản tải được. Hãy phát video vài giây rồi bấm lại. Video có DRM thì không tải được.";
 
   function itemButton(item) {
     const button = document.createElement("button");
@@ -328,7 +347,8 @@
       // the page loaded, less the files other videos on the page are playing.
       const others = [...document.getElementsByTagName("video")].filter((v) => v !== video).map((v) => v.currentSrc);
       const direct = /^https?:\/\//i.test(video.currentSrc);
-      reply = await chrome.runtime.sendMessage({ type: "streams", sources: sourcesOf(video), direct, others, title: document.title });
+      const page = /(^|\.)youtube(-nocookie)?\.com$/.test(location.hostname) ? pageOf(video) : "";
+      reply = await chrome.runtime.sendMessage({ type: "streams", sources: sourcesOf(video), direct, others, title: document.title, page });
     } catch {
       reply = { items: [], notes: ["Tiện ích Lanes vừa được cập nhật. Hãy tải lại trang."] };
     }
