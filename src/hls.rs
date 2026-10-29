@@ -1,7 +1,8 @@
 //! HLS video, an .m3u8 playlist of short segments, as the video button of the browser extension finds it. A master
 //! playlist lists the same video at several resolutions; a media playlist lists the segments of one of them. The
 //! extension shows the resolutions of a master to choose from (`choices`), and the engine downloads the segments of
-//! the chosen one several at a time and joins them in order into one file (`engine::Engine::run_hls`).
+//! the chosen one several at a time and joins them in order into one MP4: MPEG-TS segments are rewrapped by the ffmpeg
+//! the app carries, since few players open a bare .ts (`engine::Engine::run_hls`, `engine::settle`).
 //!
 //! Plain or AES-128 segments, MPEG-TS or fragmented MP4, whole files or byte ranges of one. Never DRM: a SAMPLE-AES or
 //! other protected stream is refused.
@@ -52,13 +53,6 @@ pub struct Media {
     pub duration: f64,
 }
 
-impl Media {
-    /// The file type the joined segments make.
-    pub fn extension(&self) -> &'static str {
-        if self.init.is_some() { "mp4" } else { "ts" }
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub enum Playlist {
     /// The resolutions, best first, and the audio and subtitle playlists the master also names.
@@ -67,7 +61,7 @@ pub enum Playlist {
 }
 
 /// What the extension shows for one playlist: its resolutions, how long it runs to estimate each one's size, and the
-/// type of file it makes. `renditions` are playlists the master names that are not resolutions, so the extension does
+/// type of file it makes, always MP4. `renditions` are playlists the master names that are not resolutions, so the extension does
 /// not offer them on their own.
 #[derive(Debug, Serialize)]
 pub struct Choices {
@@ -279,11 +273,11 @@ pub fn choices(url: &str, headers: &[(String, String)]) -> Result<Choices, Strin
             variants: vec![Variant { url: url.to_owned(), height: None, bandwidth: None, separate_audio: false }],
             renditions: Vec::new(),
             duration: media.duration,
-            ext: media.extension(),
+            ext: "mp4",
         }),
         Playlist::Master { variants, renditions } => {
             let media = media_at(&variants[0].url, url, headers)?;
-            Ok(Choices { variants, renditions, duration: media.duration, ext: media.extension() })
+            Ok(Choices { variants, renditions, duration: media.duration, ext: "mp4" })
         }
     }
 }
@@ -352,7 +346,6 @@ https://other.example/seg9.ts
 ";
         let Playlist::Media(media) = parse(text, "https://s.example/a/b/list.m3u8").unwrap() else { panic!("media") };
         assert_eq!(media.duration, 12.5);
-        assert_eq!(media.extension(), "ts");
         assert_eq!(media.segments.len(), 3);
         assert_eq!(media.segments[0], Segment { url: "https://s.example/a/b/seg7.ts".into(), range: None, key: None, sequence: 7 });
         let key = media.segments[1].key.as_ref().unwrap();
@@ -363,7 +356,6 @@ https://other.example/seg9.ts
         let fmp4 = "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:4,\n1.m4s\n#EXT-X-ENDLIST\n";
         let Playlist::Media(media) = parse(fmp4, "https://s.example/list.m3u8").unwrap() else { panic!("media") };
         assert_eq!(media.init.as_ref().unwrap().url, "https://s.example/init.mp4");
-        assert_eq!(media.extension(), "mp4");
         let ranges = "#EXTM3U\n#EXT-X-MAP:URI=\"main.mp4\",BYTERANGE=\"720@0\"\n#EXTINF:4,\n#EXT-X-BYTERANGE:1000@720\nmain.mp4\n\
                       #EXTINF:4,\n#EXT-X-BYTERANGE:500\nmain.mp4\n#EXT-X-ENDLIST\n";
         let Playlist::Media(media) = parse(ranges, "https://s.example/list.m3u8").unwrap() else { panic!("media") };

@@ -299,6 +299,7 @@
     /^https:\/\/(?:www\.|m\.|web\.)?facebook\.com\/(?:reel\/|watch\/?\?(?:.*&)?v=|video\.php\?(?:.*&)?v=|[^/?#]+\/videos\/(?:[^/?#]+\/)?)(\d+)/,
     /^https:\/\/(?:www\.)?instagram\.com\/(?:[^/?#]+\/)?(?:p|reels?|tv)\/([\w-]+)/,
     /^https:\/\/(?:www\.)?tiktok\.com\/@[^/?#]+\/video\/(\d+)/,
+    /^https:\/\/(?:www\.)?(?:douyin|iesdouyin)\.com\/(?:video\/|share\/video\/|[^#]*[?&]modal_id=)(\d+)/,
     /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/[^/?#]+\/status\/(\d+)/,
   ];
   const videoId = (href) => VIDEO_PAGES.map((p) => p.exec(href || "")?.[1]).find(Boolean) || "";
@@ -308,6 +309,8 @@
   // video. Other links inside YouTube's player are the end screen's suggestions, so the search starts outside it. None
   // on the video's own page, or where the links around it lead to several.
   function pageOf(v) {
+    const feed = feedPage(v);
+    if (feed) return feed;
     if (videoId(location.href)) return "";
     const player = v.closest(".html5-video-player") || v;
     const title = player.querySelector("a.ytp-title-link")?.href;
@@ -317,6 +320,20 @@
       const ids = new Set(links.map((a) => videoId(a.href)));
       if (ids.size > 1) break;
       if (ids.size) return links[0].href.split("#")[0];
+    }
+    return "";
+  }
+
+  // TikTok and Douyin play a feed of videos on every page, a video's own page too, with no link to each one; only its
+  // player says which video it holds: TikTok in its id, `xgwrapper-<n>-<video id>`, Douyin in `data-e2e-vid`.
+  function feedPage(v) {
+    if (/(^|\.)tiktok\.com$/.test(location.hostname)) {
+      const id = /^xgwrapper-\d+-(\d+)$/.exec(v.closest('[id^="xgwrapper-"]')?.id || "")?.[1];
+      return id ? `https://www.tiktok.com/@_/video/${id}` : "";
+    }
+    if (/(^|\.)douyin\.com$/.test(location.hostname)) {
+      const id = v.closest("[data-e2e-vid]")?.getAttribute("data-e2e-vid") || "";
+      return /^\d+$/.test(id) ? `https://www.douyin.com/video/${id}` : "";
     }
     return "";
   }

@@ -7,6 +7,7 @@ use crate::ytdlp::{Choice, Formats};
 use serde_json::Value;
 use std::io::Read;
 
+pub mod douyin;
 pub mod facebook;
 pub mod generic;
 pub mod instagram;
@@ -104,6 +105,8 @@ fn reader(url: &str) -> Reader {
         instagram::read
     } else if on("tiktok.com") {
         tiktok::read
+    } else if on("douyin.com") || on("iesdouyin.com") {
+        douyin::read
     } else if on("x.com") || on("twitter.com") {
         twitter::read
     } else {
@@ -266,6 +269,8 @@ mod tests {
         assert!(is("https://m.facebook.com/reel/1", facebook::read));
         assert!(is("https://www.instagram.com/reel/x/", instagram::read));
         assert!(is("https://www.tiktok.com/@a/video/1", tiktok::read));
+        assert!(is("https://www.douyin.com/video/1", douyin::read));
+        assert!(is("https://v.douyin.com/x/", douyin::read));
         assert!(is("https://x.com/a/status/1", twitter::read));
         assert!(is("https://twitter.com/a/status/1", twitter::read));
         assert!(is("https://notyoutube.com/v", generic::read), "a host that only ends like a site is not it");

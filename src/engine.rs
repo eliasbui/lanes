@@ -682,7 +682,8 @@ impl Engine {
     }
 
     /// An HLS video (src/hls.rs): the segments of its playlist, several at a time, each kept as a numbered file in a
-    /// folder beside the final file so a resume skips the ones already there; then joined in order into the file.
+    /// folder beside the final file so a resume skips the ones already there; then joined in order into the file, an MP4
+    /// when its name asks for one (`settle`).
     /// The size shown is an estimate from the segments so far until the join gives the real one.
     fn run_hls(&self, task: &Task) {
         let media = match hls::load(&task.url, &task.headers) {
@@ -699,14 +700,16 @@ impl Engine {
             return;
         }
         let parts: Vec<PathBuf> = pieces.into_iter().map(|p| p.path).collect();
-        match join_parts(&parts, &folder, &task.final_path) {
+        let joined = folder.join("video.ts");
+        let made = join_parts(&parts, &folder, &joined).map_err(|e| format!("Không ghép được video: {e}")).and_then(|_| settle(&joined, &folder, &task.final_path));
+        match made.and_then(|()| fs::metadata(&task.final_path).map(|m| m.len()).map_err(|e| e.to_string())) {
             Ok(size) => {
                 task.total.store(size, Ordering::Relaxed);
                 task.downloaded.store(size, Ordering::Relaxed);
                 let _ = fs::remove_dir_all(&folder);
                 task.state.store(state::DONE, Ordering::SeqCst);
             }
-            Err(e) => task.set_error(format!("Không ghép được video: {e}")),
+            Err(e) => task.set_error(e),
         }
     }
 }
@@ -802,7 +805,7 @@ impl Engine {
             start = *end;
         }
         let made = match joined.as_slice() {
-            [one] => fs::rename(one, &task.final_path).map_err(|e| format!("Không đổi tên được tệp: {e}")),
+            [one] => settle(one, &folder, &task.final_path),
             [picture, sound] => mux(picture, sound, &folder, &task.final_path),
             _ => Err("Bản này không có luồng nào".into()),
         };
@@ -846,21 +849,46 @@ fn range_pieces<'a>(url: &'a str, size: Option<u64>, folder: &Path, headers: &'a
 
 /// A picture and a sound into one MP4 by the ffmpeg the app carries, without encoding them again.
 fn mux(picture: &Path, sound: &Path, folder: &Path, final_path: &Path) -> Result<(), String> {
-    let ffmpeg = ytdlp::ffmpeg().ok_or("Thiếu ffmpeg để ghép hình và tiếng")?;
+    to_mp4(&[picture, sound], &["-map", "0:v:0", "-map", "1:a:0"], folder, final_path).map_err(|e| format!("Không ghép được hình và tiếng: {e}"))
+}
+
+/// A whole joined file into `final_path`. MPEG-TS, what most HLS segments are, becomes the MP4 its name asks for, its
+/// streams copied as they are, since few players open a bare .ts. A stream ffmpeg cannot rewrap is kept as it is, which
+/// VLC and the like still play, rather than lose the download. Anything else is moved as it is.
+fn settle(joined: &Path, folder: &Path, final_path: &Path) -> Result<(), String> {
+    let mp4 = final_path.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp4"));
+    // Subtitles and timed metadata of a TS have no place in an MP4; the picture and the sound are what is kept.
+    if !(mp4 && is_ts(joined)) || to_mp4(&[joined], &["-sn", "-dn"], folder, final_path).is_err() {
+        return fs::rename(joined, final_path).map_err(|e| format!("Không đổi tên được tệp: {e}"));
+    }
+    Ok(())
+}
+
+/// MPEG-TS: packets of 188 bytes, each starting with 0x47.
+fn is_ts(path: &Path) -> bool {
+    let mut head = [0u8; 189];
+    fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)).is_ok() && head[0] == 0x47 && head[188] == 0x47
+}
+
+/// `inputs` into one MP4 at `final_path` by the ffmpeg the app carries, with `args` before the streams are copied.
+fn to_mp4(inputs: &[&Path], args: &[&str], folder: &Path, final_path: &Path) -> Result<(), String> {
+    let ffmpeg = ytdlp::ffmpeg().ok_or("Thiếu ffmpeg")?;
     let out = folder.join("joined.mp4");
-    let done = crate::cmd(&ffmpeg.to_string_lossy())
-        .args(["-nostdin", "-loglevel", "error", "-y", "-i"])
-        .arg(picture)
-        .arg("-i")
-        .arg(sound)
-        .args(["-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-movflags", "+faststart"])
+    let mut command = crate::cmd(&ffmpeg.to_string_lossy());
+    command.args(["-nostdin", "-loglevel", "error", "-y"]);
+    for input in inputs {
+        command.arg("-i").arg(input);
+    }
+    let done = command
+        .args(args)
+        .args(["-c", "copy", "-movflags", "+faststart"])
         .arg(&out)
         .stdin(std::process::Stdio::null())
         .output()
         .map_err(|e| format!("Không chạy được ffmpeg: {e}"))?;
     if !done.status.success() {
-        let error = String::from_utf8_lossy(&done.stderr);
-        return Err(format!("Không ghép được hình và tiếng: {}", error.lines().last().unwrap_or_default()));
+        let _ = fs::remove_file(&out);
+        return Err(String::from_utf8_lossy(&done.stderr).lines().last().unwrap_or_default().to_owned());
     }
     fs::rename(&out, final_path).map_err(|e| format!("Không đổi tên được tệp: {e}"))
 }
@@ -1487,25 +1515,25 @@ mod tests {
     }
 
     /// HLS over the network: the smallest resolution of a public MPEG-TS stream and of a fragmented-MP4 one cut into
-    /// byte ranges, each joined into a file that starts as its container should. Run with
+    /// byte ranges, each made into an MP4, the TS one by ffmpeg. Run with
     /// `cargo test -- --ignored hls_from`.
     #[test]
     #[ignore = "needs the network"]
     fn hls_from_the_network_makes_whole_files() {
         let streams = [
-            ("https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", "ts"),
-            ("https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8", "mp4"),
+            "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+            "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8",
         ];
         let dir = std::env::temp_dir().join(format!("lanes-hls-net-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let engine = Arc::new(Engine::new());
         engine.set_connections(8);
-        for (id, (master, ext)) in streams.into_iter().enumerate() {
+        for (id, master) in streams.into_iter().enumerate() {
             let choices = hls::choices(master, &[]).unwrap();
-            assert_eq!(choices.ext, ext);
+            assert_eq!(choices.ext, "mp4");
             let smallest = choices.variants.last().unwrap().url.clone();
-            let path = dir.join(format!("{id}.{ext}"));
+            let path = dir.join(format!("{id}.mp4"));
             engine.start(id as i64, vec![smallest], path.clone(), Vec::new(), Kind::Hls);
             loop {
                 let snap = engine.snapshots().into_iter().find(|s| s.id == id as i64).unwrap();
@@ -1517,11 +1545,7 @@ mod tests {
             }
             let bytes = fs::read(&path).unwrap();
             eprintln!("{master}: {} bytes", bytes.len());
-            if ext == "ts" {
-                assert!(bytes.len() > 188 * 100 && bytes.iter().step_by(188).take(100).all(|&b| b == 0x47), "MPEG-TS packets");
-            } else {
-                assert_eq!(&bytes[4..8], b"ftyp", "an MP4 starts with its ftyp box");
-            }
+            assert_eq!(&bytes[4..8], b"ftyp", "an MP4 starts with its ftyp box, the MPEG-TS one rewrapped");
         }
         fs::remove_dir_all(&dir).unwrap();
     }

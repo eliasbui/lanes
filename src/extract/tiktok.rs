@@ -47,7 +47,7 @@ pub fn read(page: &str, cookie: &str) -> Result<Video, String> {
 }
 
 /// Where a short link leads.
-fn followed(url: &str) -> Result<String, String> {
+pub(super) fn followed(url: &str) -> Result<String, String> {
     match crate::engine::agent(None).head(url).set("User-Agent", "facebookexternalhit/1.1").call() {
         Ok(response) => Ok(response.get_url().to_owned()),
         Err(ureq::Error::Status(code, _)) => Err(format!("Máy chủ trả mã {code}")),
@@ -167,7 +167,7 @@ fn usable(url: &str) -> bool {
     url.starts_with("https://") && !url.starts_with("https://www.tiktok.com/") && !url.split('?').next().unwrap_or_default().ends_with("/media-video-hvc1/")
 }
 
-fn format_id(key: &str) -> String {
+pub(super) fn format_id(key: &str) -> String {
     key.chars().map(|c| if c.is_ascii_alphanumeric() || "+-_.".contains(c) { c } else { '_' }).collect()
 }
 

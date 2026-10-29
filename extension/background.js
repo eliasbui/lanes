@@ -11,8 +11,9 @@
 const HOST = "com.eliasbui.lanes";
 const MENU = "lanes-download";
 
-// File types the browser is better left to handle, and pages that are not real downloads.
-const SKIP = /\.(html?|xml|json|css|js|txt)(\?|$)/i;
+// File types the browser is better left to handle, and pages that are not real downloads, by the address's path: a
+// query that ends in one (`setup.exe?from=download.html`) is no page.
+const SKIP = /\.(html?|xml|json|css|js|txt)$/i;
 // What the video button can offer: a whole video file the page played, or an HLS playlist.
 const VIDEO_FILE = /\.(mp4|m4v|webm|mov|mkv|flv|avi|3gp|ogv)$/i;
 const HLS_FILE = /\.m3u8$/i;
@@ -230,7 +231,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
   if (!(await autoCapture())) return;
   const url = item.finalUrl || item.url || "";
   if (!/^https?:\/\//i.test(url)) return;
-  if (SKIP.test(url) && !item.filename) return;
+  if (SKIP.test(url.split(/[?#]/)[0]) && !item.filename) return;
   // Only in-progress downloads the browser has not finished; a resumed or already-done one is left alone.
   if (item.state && item.state !== "in_progress") return;
   const filename = (item.filename || "").split(/[\\/]/).pop() || "";

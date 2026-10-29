@@ -200,7 +200,6 @@ fn main() {
                     let size = probe.as_ref().and_then(|p| p.size).or((job.size > 0).then_some(job.size));
                     let filename = match job.filename {
                         name if !name.is_empty() => name,
-                        _ if kind == engine::Kind::Hls => "video.ts".into(),
                         _ if kind != engine::Kind::File => "video.mp4".into(),
                         _ => probe.map(|p| p.filename).unwrap_or_else(|| engine::filename_from(&job.url, None)),
                     };

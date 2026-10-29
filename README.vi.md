@@ -43,9 +43,9 @@ tiếng Việt.
   đầu phát; bấm vào sẽ thấy các bản Lanes tải được cho video đó theo độ phân giải (4K, 2K, 1080p, ...) kèm dung lượng
   hoặc dung lượng ước tính. Tệp video nguyên vẹn đi qua
   engine nhiều kết nối như thường; luồng HLS (`.m3u8`) được tải song song từng đoạn, kể cả mã hóa AES-128, tiếp tục
-  được khi dừng, rồi ghép thành một tệp `.ts` hoặc `.mp4`. Lanes tự đọc trang video: YouTube (mọi độ phân giải tới
+  được khi dừng, rồi ghép thành một tệp MP4 (luồng MPEG-TS được ffmpeg đóng lại thành MP4, không mã hóa lại). Lanes tự đọc trang video: YouTube (mọi độ phân giải tới
   4K và bản chỉ âm thanh; video chỉ cho người đã đăng nhập, như video giới hạn độ tuổi, thì dùng phiên YouTube của
-  trình duyệt), Facebook, Instagram, TikTok và X, còn ở trang khác thì lấy video mà trang tự khai báo (Open Graph,
+  trình duyệt), Facebook, Instagram, TikTok, Douyin và X, còn ở trang khác thì lấy video mà trang tự khai báo (Open Graph,
   JSON-LD, thẻ `<video>`). Bản được chọn được tải từng phần qua nhiều kết nối, rồi hình và tiếng được ghép thành MP4.
   Không hỗ trợ: phát trực tiếp, và video có DRM (Lanes không bao giờ động tới).
 - **Tiến độ ngay trên trình duyệt.** Những gì Lanes đang tải cũng hiện trên trình duyệt: nút tiện ích trên thanh công cụ
@@ -131,7 +131,7 @@ Rust 1.85 trở lên.
   trang. Cùng một tệp với `crates/core-netmerge/src/lib.rs` của figghost.
 - `src/hls.rs` — danh sách HLS: các độ phân giải của bản chính, các đoạn, khóa và đoạn byte của một bản, và giải mã
   AES-128.
-- `src/extract/` — trang video do Lanes tự đọc: mỗi trang một bộ đọc (YouTube, Facebook, Instagram, TikTok, X, và một
+- `src/extract/` — trang video do Lanes tự đọc: mỗi trang một bộ đọc (YouTube, Facebook, Instagram, TikTok, Douyin, X, và một
   bộ cho trang bất kỳ) biến trang thành các bản, mỗi bản là một tệp hoặc một hình và một tiếng để ghép; `jsc.rs` giải
   chữ ký và mã `n` của YouTube bằng QuickJS nhúng sẵn. Engine tải chúng theo phần tối đa 10 MiB, mức googlevideo còn
   cho tải hết tốc độ trong một yêu cầu.

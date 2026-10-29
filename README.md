@@ -43,9 +43,9 @@ bar, and is in English and Vietnamese.
   for a few seconds when the video starts playing; it lists what Lanes can download for that video by resolution (4K,
   2K, 1080p, ...) with the size or an estimate. Whole video files go through the
   normal multi-connection engine; HLS streams (`.m3u8`) are fetched segment by segment in parallel, AES-128 included,
-  resumable, and joined into one `.ts` or `.mp4`. Video pages Lanes reads itself: YouTube (every resolution up to
+  resumable, and joined into one MP4 (an MPEG-TS stream rewrapped by ffmpeg, not encoded again). Video pages Lanes reads itself: YouTube (every resolution up to
   4K and the sound alone; a video for signed-in viewers, such as one behind an age check, with the browser's YouTube
-  session), Facebook, Instagram, TikTok and X, and on any other site the video the page names (Open Graph, JSON-LD,
+  session), Facebook, Instagram, TikTok, Douyin and X, and on any other site the video the page names (Open Graph, JSON-LD,
   its `<video>` tags). The picked version comes in pieces over several connections and its picture and sound are
   joined into an MP4. Not supported: live streams, and anything with DRM, which Lanes never touches.
 - **Progress in the browser.** What Lanes downloads shows in the browser too: the toolbar button carries the share
@@ -133,7 +133,7 @@ Rust 1.85 or later.
   for a site. The same file is figghost's `crates/core-netmerge/src/lib.rs`.
 - `src/hls.rs` — HLS playlists: resolutions of a master, segments, keys and byte ranges of a media playlist, and
   AES-128 decryption.
-- `src/extract/` — video pages read by Lanes: a reader per site (YouTube, Facebook, Instagram, TikTok, X, and one for
+- `src/extract/` — video pages read by Lanes: a reader per site (YouTube, Facebook, Instagram, TikTok, Douyin, X, and one for
   any page) turns a page into its versions, each a file or a picture and a sound to join; `jsc.rs` solves YouTube's
   signature and `n` challenges in an embedded QuickJS. The engine fetches them in pieces of at most 10 MiB, the most
   googlevideo serves at full speed in one request.

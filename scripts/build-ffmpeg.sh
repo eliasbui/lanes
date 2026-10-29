@@ -1,9 +1,10 @@
 #!/bin/sh
 # Builds the ffmpeg Lanes carries inside it (src/ytdlp.rs) and prints where it is, for build.rs through LANES_FFMPEG.
 # It only joins a video to its sound as they are: every demuxer, muxer, parser and bitstream filter, the file
-# protocol, and no outside library. The one codec is VP9's decoder: an MP4 has to state the pixel format of a VP9
-# stream, and a WebM from YouTube (its 1440p and 2160p) does not say it, so ffmpeg reads the first frames for it.
-# That keeps it about 4 MB, LGPL, and needing nothing installed. Built once per version and target into
+# protocol, and no outside library. The two codecs are decoders, for what an MP4 has to state and its source leaves to
+# a decoder: VP9's for the pixel format, which a WebM from YouTube (its 1440p and 2160p) does not say, and AAC's for
+# the sample rate, which the sound of an HLS stream in MPEG-TS gives only to a decoder; ffmpeg reads the first frames
+# for them. That keeps it about 4 MB, LGPL, and needing nothing installed. Built once per version and target into
 # target/ffmpeg/; delete that folder after changing the options below.
 #
 #   scripts/build-ffmpeg.sh aarch64-apple-darwin
@@ -34,7 +35,7 @@ tar -xJf "$TARBALL" -C "$BUILD" --strip-components 1
 
 set -- --disable-everything --disable-autodetect --disable-asm --disable-doc --disable-debug --enable-small \
     --disable-ffplay --disable-ffprobe --disable-avdevice --disable-swscale --disable-network \
-    --enable-protocol=file,pipe --enable-decoder=vp9 --enable-demuxers --enable-muxers --enable-parsers --enable-bsfs \
+    --enable-protocol=file,pipe --enable-decoder=vp9,aac --enable-demuxers --enable-muxers --enable-parsers --enable-bsfs \
     --enable-cross-compile --arch="${TARGET%%-*}"
 case $TARGET in
 *-apple-darwin)
