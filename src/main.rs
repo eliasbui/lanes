@@ -386,9 +386,8 @@ impl App {
         if let Some(folder) = engine::category(&req.filename).filter(|_| self.settings.classify) {
             dir.push(folder);
         }
-        if std::fs::create_dir_all(&dir).is_err() {
-            self.post(&json!({ "event": "toast", "data": "Không ghi được vào thư mục tải xuống" }));
-            return;
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            return self.fail(format!("Không ghi được vào thư mục tải xuống {}: {e}", dir.display()));
         }
         let path = engine::unique_path(&dir, &req.filename);
         let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
@@ -397,7 +396,7 @@ impl App {
         let sources_json = if req.sources.len() > 1 { serde_json::to_string(&req.sources).unwrap_or_else(|_| "[]".into()) } else { "[]".into() };
         let id = match store::add(&self.db, req.url(), &filename, &dir.to_string_lossy(), &headers_json, &sources_json, req.hls, now()) {
             Ok(id) => id,
-            Err(e) => return eprintln!("add: {e}"),
+            Err(e) => return self.fail(format!("Lanes không thêm được {filename}: {e}")),
         };
         if let Some(size) = req.size {
             let _ = store::set_size(&self.db, id, size);
@@ -405,6 +404,14 @@ impl App {
         let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
         self.engine.start(id, req.sources, path, req.headers, req.hls);
         self.push_list();
+    }
+
+    /// Says why a download could not be added, in the window and as a notification, since a download the browser handed
+    /// over is no longer in the browser and the window may be closed.
+    fn fail(&self, message: String) {
+        eprintln!("{message}");
+        let _ = notify_rust::Notification::new().summary(APP_NAME).body(&message).show();
+        self.post(&json!({ "event": "toast", "data": message }));
     }
 
     /// Moves the engine's live state into the stored list, and sends the list with fresh speeds to the page.

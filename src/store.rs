@@ -63,9 +63,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
             hls       INTEGER NOT NULL DEFAULT 0
         );",
     )?;
-    // A list from before 0.3 has no hls column yet.
-    if db.prepare("SELECT hls FROM downloads LIMIT 0").is_err() {
-        db.execute("ALTER TABLE downloads ADD COLUMN hls INTEGER NOT NULL DEFAULT 0", [])?;
+    // The columns added after 0.1.0, which a list made by an older version gains here. 0.2.0 added sources to the new
+    // table only, so a list from 0.1.0 failed every read and write until this.
+    for (column, kind) in [("sources", "TEXT NOT NULL DEFAULT '[]'"), ("hls", "INTEGER NOT NULL DEFAULT 0")] {
+        if db.prepare(&format!("SELECT {column} FROM downloads LIMIT 0")).is_err() {
+            db.execute(&format!("ALTER TABLE downloads ADD COLUMN {column} {kind}"), [])?;
+        }
     }
     Ok(db)
 }
@@ -156,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn a_list_from_before_hls_gains_the_column() {
+    fn a_list_from_0_1_gains_every_later_column() {
         let path = std::env::temp_dir().join(format!("lanes-store-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         Connection::open(&path)
@@ -164,12 +167,14 @@ mod tests {
             .execute_batch(
                 "CREATE TABLE downloads (id INTEGER PRIMARY KEY, url TEXT NOT NULL, filename TEXT NOT NULL, dir TEXT NOT NULL,
                  size INTEGER, status INTEGER NOT NULL, added_at INTEGER NOT NULL, error TEXT NOT NULL DEFAULT '',
-                 headers TEXT NOT NULL DEFAULT '[]', sources TEXT NOT NULL DEFAULT '[]');
+                 headers TEXT NOT NULL DEFAULT '[]');
                  INSERT INTO downloads (url, filename, dir, status, added_at) VALUES ('https://x.com/a', 'a', '/tmp', 3, 1);",
             )
             .unwrap();
         let db = open(&path).unwrap();
-        assert!(!list(&db).unwrap()[0].hls);
+        let old = &list(&db).unwrap()[0];
+        assert!(!old.hls);
+        assert_eq!(old.source_list(), vec!["https://x.com/a".to_string()]);
         let id = add(&db, "https://x.com/v.m3u8", "v.ts", "/tmp", "[]", "[]", true, 2).unwrap();
         assert!(get(&db, id).unwrap().unwrap().hls);
         drop(db);
