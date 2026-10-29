@@ -64,8 +64,9 @@ pub struct Job {
     pub referrer: String,
     pub cookie: String,
     pub user_agent: String,
-    /// The URL is an HLS playlist the video button picked.
+    /// The URL is an HLS playlist the video button picked, and `audio` the playlist of its sound when that is apart.
     pub hls: bool,
+    pub audio: String,
     /// The URL is a video page, and this the yt-dlp format the video button picked.
     pub format: String,
     /// The size the video button estimated, for a page; 0 when unknown.
@@ -87,6 +88,7 @@ impl Job {
             cookie: field("cookie", MAX_HEADER),
             user_agent: field("userAgent", 1000),
             hls: message["kind"] == "hls",
+            audio: Some(field("audio", MAX_URL)).filter(|a| message["kind"] == "hls" && (a.starts_with("http://") || a.starts_with("https://"))).unwrap_or_default(),
             format: match message["kind"].as_str() {
                 Some("page") => Some(field("format", 200)).filter(|f| crate::ytdlp::valid_format(f))?,
                 _ => String::new(),
@@ -99,7 +101,7 @@ impl Job {
         use crate::engine::Kind;
         match (self.hls, self.format.is_empty()) {
             (_, false) => Kind::Page { format: self.format.clone() },
-            (true, true) => Kind::Hls,
+            (true, true) => Kind::Hls { audio: self.audio.clone() },
             (false, true) => Kind::File,
         }
     }
@@ -453,6 +455,10 @@ mod tests {
         ]);
         assert!(!job.hls);
         assert!(Job::from_message(&json!({ "url": "https://x.com/m.m3u8", "kind": "hls" })).unwrap().hls);
+        let sound = Job::from_message(&json!({ "url": "https://x.com/v.m3u8", "kind": "hls", "audio": "https://x.com/en.m3u8" })).unwrap();
+        assert_eq!(sound.kind(), crate::engine::Kind::Hls { audio: "https://x.com/en.m3u8".into() });
+        assert_eq!(Job::from_message(&json!({ "url": "https://x.com/v.m3u8", "kind": "hls", "audio": "file:///etc/passwd" })).unwrap().audio, "");
+        assert_eq!(Job::from_message(&json!({ "url": "https://x.com/a.zip", "audio": "https://x.com/en.m3u8" })).unwrap().audio, "", "only an HLS playlist has a sound of its own");
         let page = Job::from_message(&json!({ "url": "https://youtube.com/watch?v=x", "kind": "page", "format": "136+140", "size": 1e6 })).unwrap();
         assert_eq!(page.kind(), crate::engine::Kind::Page { format: "136+140".into() });
         assert_eq!(page.size, 1_000_000);

@@ -339,13 +339,15 @@ function fileItem(m, title) {
 
 function hlsItem(v, reply, title) {
   const size = v.bandwidth && reply.duration ? (v.bandwidth * reply.duration) / 8 : 0;
+  // A sound in a playlist of its own comes along, and the app joins it to the picture.
   return {
     kind: "hls",
     url: v.url,
+    sound: v.audio || "",
     height: v.height || 0,
     size,
     label: v.height ? `${v.height}p` : "HLS",
-    detail: [v.height ? "HLS" : "", size ? `khoảng ${human(size)}` : "", v.separate_audio ? "không kèm tiếng" : ""].filter(Boolean).join(" · "),
+    detail: [v.height ? "HLS" : "", size ? `khoảng ${human(size)}` : ""].filter(Boolean).join(" · "),
     filename: nameFor(title, v.height, reply.ext),
   };
 }
@@ -461,8 +463,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     return true;
   }
   if (message?.type === "download") {
-    const { url = "", filename = "", kind = "", format = "", size = 0 } = message.item || {};
-    const extra = kind === "hls" ? { kind } : kind === "page" ? { kind, format, size } : {};
+    const { url = "", filename = "", kind = "", format = "", size = 0, sound = "" } = message.item || {};
+    const extra = kind === "hls" ? { kind, audio: sound } : kind === "page" ? { kind, format, size } : {};
     toLanes(url, filename, sender.url || sender.tab?.url || "", extra).then(reply);
     return true;
   }

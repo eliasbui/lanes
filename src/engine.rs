@@ -56,8 +56,9 @@ pub enum Kind {
     /// A file, fetched over several connections.
     #[default]
     File,
-    /// An HLS playlist from the video button, its segments joined into the file (`run_hls`).
-    Hls,
+    /// An HLS playlist from the video button, its segments joined into the file (`run_hls`), and the playlist of its
+    /// sound when that is apart from the picture, joined to it by ffmpeg; empty when the sound is in the picture's.
+    Hls { audio: String },
     /// A video page (YouTube and the like) with the format picked in the video button: one Lanes reads itself
     /// (`extract::PREFIX` and a variant's id, `run_media`), or one of yt-dlp's (`run_page`).
     Page { format: String },
@@ -553,7 +554,7 @@ impl Engine {
     /// save progress while they run, then put the finished file in place.
     fn run(&self, task: Arc<Task>, resume: Option<Meta>) {
         match &task.kind {
-            Kind::Hls => return self.run_hls(&task),
+            Kind::Hls { .. } => return self.run_hls(&task),
             Kind::Page { format } => {
                 return match format.strip_prefix(extract::PREFIX) {
                     Some(id) => self.run_media(&task, id),
@@ -688,25 +689,44 @@ impl Engine {
 
     /// An HLS video (src/hls.rs): the segments of its playlist, several at a time, each kept as a numbered file in a
     /// folder beside the final file so a resume skips the ones already there; then joined in order into the file, an MP4
-    /// when its name asks for one (`settle`).
+    /// when its name asks for one (`settle`). A sound that is a playlist of its own comes the same way, into a folder
+    /// of its own inside that one, and ffmpeg puts it with the picture.
     /// The size shown is an estimate from the segments so far until the join gives the real one.
     fn run_hls(&self, task: &Task) {
-        let media = match hls::load(&task.url, &task.headers) {
+        let Kind::Hls { audio } = &task.kind else { return };
+        let picture = match hls::load(&task.url, &task.headers) {
             Ok(media) => media,
             Err(e) => return task.set_error(e),
         };
+        // The headers were chosen for the picture's playlist, so its address is the one a cookie among them is for.
+        let sound = match audio.as_str() {
+            "" => None,
+            url => match hls::media_at(url, &task.url, &task.headers) {
+                Ok(media) => Some(media),
+                Err(e) => return task.set_error(format!("Không tải được tiếng của video: {e}")),
+            },
+        };
         let folder = part_of(&task.final_path);
-        if let Err(e) = fs::create_dir_all(&folder) {
+        let sound_folder = folder.join("sound");
+        if let Err(e) = fs::create_dir_all(if sound.is_some() { &sound_folder } else { &folder }) {
             return task.set_error(format!("Không tạo được thư mục tạm: {e}"));
         }
         task.downloaded.store(0, Ordering::Relaxed);
-        let pieces = playlist_pieces(media, &folder, &task.headers, &task.url);
+        let mut pieces = playlist_pieces(picture, &folder, &task.headers, &task.url);
+        let split = pieces.len();
+        if let Some(media) = sound {
+            pieces.extend(playlist_pieces(media, &sound_folder, &task.headers, &task.url));
+        }
         if !self.keep_all(task, &pieces, true) {
             return;
         }
-        let parts: Vec<PathBuf> = pieces.into_iter().map(|p| p.path).collect();
-        let joined = folder.join("video.ts");
-        let made = join_parts(&parts, &folder, &joined).map_err(|e| format!("Không ghép được video: {e}")).and_then(|_| settle(&joined, &folder, &task.final_path));
+        let paths = |pieces: &[Piece]| pieces.iter().map(|p| p.path.clone()).collect::<Vec<PathBuf>>();
+        let (video, sound) = (folder.join("video.ts"), folder.join("sound.ts"));
+        let apart = split < pieces.len();
+        let made = join_parts(&paths(&pieces[..split]), &folder, &video)
+            .and_then(|_| if apart { join_parts(&paths(&pieces[split..]), &folder, &sound).map(|_| ()) } else { Ok(()) })
+            .map_err(|e| format!("Không ghép được video: {e}"))
+            .and_then(|()| if apart { mux(&video, &sound, &folder, &task.final_path) } else { settle(&video, &folder, &task.final_path) });
         match made.and_then(|()| fs::metadata(&task.final_path).map(|m| m.len()).map_err(|e| e.to_string())) {
             Ok(size) => {
                 task.total.store(size, Ordering::Relaxed);
@@ -1547,7 +1567,7 @@ mod tests {
         let path = dir.join("video.ts");
         let engine = Arc::new(Engine::new());
         engine.set_connections(3);
-        engine.start(1, vec![format!("{base}/master.m3u8")], path.clone(), Vec::new(), Kind::Hls);
+        engine.start(1, vec![format!("{base}/master.m3u8")], path.clone(), Vec::new(), Kind::Hls { audio: String::new() });
         let snap = loop {
             let snap = engine.snapshots().into_iter().next().expect("the task is listed");
             match snap.state {
@@ -1563,7 +1583,7 @@ mod tests {
     }
 
     /// HLS over the network: the smallest resolution of a public MPEG-TS stream and of a fragmented-MP4 one cut into
-    /// byte ranges, each made into an MP4, the TS one by ffmpeg. Run with
+    /// byte ranges whose sound is a playlist of its own, each made into an MP4 with its sound by ffmpeg. Run with
     /// `cargo test -- --ignored hls_from`.
     #[test]
     #[ignore = "needs the network"]
@@ -1580,9 +1600,9 @@ mod tests {
         for (id, master) in streams.into_iter().enumerate() {
             let choices = hls::choices(master, &[]).unwrap();
             assert_eq!(choices.ext, "mp4");
-            let smallest = choices.variants.last().unwrap().url.clone();
+            let smallest = choices.variants.last().unwrap().clone();
             let path = dir.join(format!("{id}.mp4"));
-            engine.start(id as i64, vec![smallest], path.clone(), Vec::new(), Kind::Hls);
+            engine.start(id as i64, vec![smallest.url], path.clone(), Vec::new(), Kind::Hls { audio: smallest.audio.unwrap_or_default() });
             loop {
                 let snap = engine.snapshots().into_iter().find(|s| s.id == id as i64).unwrap();
                 match snap.state {
@@ -1594,6 +1614,9 @@ mod tests {
             let bytes = fs::read(&path).unwrap();
             eprintln!("{master}: {} bytes", bytes.len());
             assert_eq!(&bytes[4..8], b"ftyp", "an MP4 starts with its ftyp box, the MPEG-TS one rewrapped");
+            let probe = std::process::Command::new(ytdlp::ffmpeg().unwrap()).arg("-i").arg(&path).output().unwrap();
+            let streams = String::from_utf8_lossy(&probe.stderr);
+            assert!(streams.contains("Video:") && streams.contains("Audio:"), "{master}: a picture and a sound\n{streams}");
         }
         fs::remove_dir_all(&dir).unwrap();
     }

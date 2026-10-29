@@ -1,47 +1,132 @@
-//! Draws the Lanes icons into assets/: the app icon (a glossy blue tile with a download arrow over three lanes),
-//! a plain window icon, and a black template for the macOS menu bar. Run once with `cargo run --example make_icons`.
-//! Everything is supersampled four times and box-filtered down, so the rounded edges stay smooth.
+//! Draws the Lanes icons into assets/ and the extension: the app icon (a blue glass tile with a white arrow down onto a
+//! line, on Apple's icon grid), a plain window icon, a black template for the macOS menu bar, and the extension's
+//! icon. Run once with `cargo run --example make_icons`. Everything is supersampled four times and box-filtered down,
+//! so the rounded edges stay smooth.
+//!
+//! With `assets/icon-art.png`, a picture of the icon an image model made on a plain background, the app icon's body is
+//! that picture instead: its tile is found, cut out along Apple's grid and given the shadow. `LANES_ICON_ART` names
+//! another picture to try.
 
 use std::{fs::File, io::BufWriter, path::Path};
 
 const SS: usize = 4;
 
 fn main() {
-    write_png("assets/icon.png", app_icon(1024));
-    write_png("assets/icon-256.png", app_icon(256));
-    write_png("assets/icon-64.png", app_icon(64));
+    let path = std::env::var("LANES_ICON_ART").unwrap_or_else(|_| "assets/icon-art.png".into());
+    let art = Art::load(&path);
+    let art = art.as_ref();
+    write_png("assets/icon.png", app_icon(1024, art));
+    write_png("assets/icon-256.png", app_icon(256, art));
+    write_png("assets/icon-64.png", app_icon(64, art));
     write_png("assets/tray.png", tray(44));
-    write_ico("assets/icon.ico", &app_icon(256));
-    println!("wrote assets/icon.png, icon-256.png, icon-64.png, tray.png, icon.ico");
+    write_png("extension/icon-128.png", app_icon(128, art));
+    write_ico("assets/icon.ico", &app_icon(256, art));
+    println!("wrote assets/icon.png, icon-256.png, icon-64.png, tray.png, icon.ico and extension/icon-128.png");
 }
 
 /// Colour at a pixel, with alpha, before downsampling. `(x, y)` are in the supersampled grid of side `n*SS`.
-type Shade = Box<dyn Fn(f32, f32) -> [f32; 4]>;
+type Shade<'a> = Box<dyn Fn(f32, f32) -> [f32; 4] + 'a>;
 
-fn app_icon(size: usize) -> Image {
+/// The glyph, SF Symbols' `arrow.down.to.line` drawn as round-capped strokes, in a box of side `k` whose top-left is
+/// `(ox, oy)`: its signed distance, negative inside.
+fn glyph(x: f32, y: f32, ox: f32, oy: f32, k: f32, weight: f32) -> f32 {
+    let p = |u: f32, v: f32| (ox + u * k, oy + v * k);
+    let r = weight * k;
+    let strokes = [
+        (p(0.5, 0.24), p(0.5, 0.60)),
+        (p(0.32, 0.44), p(0.5, 0.62)),
+        (p(0.68, 0.44), p(0.5, 0.62)),
+        (p(0.29, 0.78), p(0.71, 0.78)),
+    ];
+    strokes.iter().map(|&(a, b)| segment(x, y, a, b) - r).fold(f32::MAX, f32::min)
+}
+
+/// A picture of the icon on a plain background, and the box of its tile in it.
+struct Art {
+    width: usize,
+    rgb: Vec<[f32; 3]>,
+    tile: (f32, f32, f32, f32),
+}
+
+impl Art {
+    /// The picture at `path`, None when there is none. Its tile is what differs from the colour of its corner.
+    fn load(path: &str) -> Option<Art> {
+        let mut reader = png::Decoder::new(std::io::Cursor::new(std::fs::read(path).ok()?)).read_info().ok()?;
+        let mut buf = vec![0; reader.output_buffer_size()?];
+        let info = reader.next_frame(&mut buf).ok()?;
+        let channels = match info.color_type {
+            png::ColorType::Rgb => 3,
+            png::ColorType::Rgba => 4,
+            _ => return None,
+        };
+        let (width, height) = (info.width as usize, info.height as usize);
+        let rgb: Vec<[f32; 3]> = buf[..width * height * channels].chunks(channels).map(|p| [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0]).collect();
+        let corner = rgb[2 * width + 2];
+        let (mut x0, mut y0, mut x1, mut y1) = (width, height, 0, 0);
+        for y in 0..height {
+            for x in 0..width {
+                let p = rgb[y * width + x];
+                if (0..3).map(|k| (p[k] - corner[k]).abs()).fold(0.0, f32::max) > 0.16 {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                }
+            }
+        }
+        println!("{path}: tile {x0},{y0} to {x1},{y1} in {width}x{height}");
+        (x1 > x0 && y1 > y0).then(|| Art { width, rgb, tile: (x0 as f32, y0 as f32, x1 as f32, y1 as f32) })
+    }
+
+    /// The colour at `(u, v)` of the tile, each 0 to 1, a little inside its edge so none of the background shows.
+    fn at(&self, u: f32, v: f32) -> [f32; 3] {
+        let inset = 0.035;
+        let (x0, y0, x1, y1) = self.tile;
+        let x = x0 + (inset + u * (1.0 - 2.0 * inset)) * (x1 - x0);
+        let y = y0 + (inset + v * (1.0 - 2.0 * inset)) * (y1 - y0);
+        let (xi, yi) = (x.floor() as usize, y.floor() as usize);
+        let (fx, fy) = (x - xi as f32, y - yi as f32);
+        let px = |x: usize, y: usize| self.rgb[y.min(self.rgb.len() / self.width - 1) * self.width + x.min(self.width - 1)];
+        let top = mix(px(xi, yi), px(xi + 1, yi), fx);
+        let bottom = mix(px(xi, yi + 1), px(xi + 1, yi + 1), fx);
+        mix(top, bottom, fy)
+    }
+}
+
+fn app_icon(size: usize, art: Option<&Art>) -> Image {
     let big = size * SS;
     let s = big as f32;
-    let radius = s * 0.225;
-    // Apple-blue tile, lighter at the top, with a soft highlight, like the glass tiles of macOS.
-    let top = [0.16, 0.56, 1.0];
-    let bottom = [0.0, 0.25, 0.86];
+    // Apple's grid for a macOS icon: a body of 824 in 1024 with a 185 corner, so the Dock shows it as it is, among
+    // the others, and a shadow under it in the margin.
+    let (c, half, radius) = (s * 0.5, s * 412.0 / 1024.0, s * 185.4 / 1024.0);
+    let (top, bottom) = ([0.30, 0.66, 1.0], [0.02, 0.33, 0.93]);
+    let edge = SS as f32 * 0.75;
     let shade: Shade = Box::new(move |x, y| {
-        let inside = rounded_coverage(x, y, s, radius);
-        if inside <= 0.0 {
-            return [0.0, 0.0, 0.0, 0.0];
+        let d = rounded_rect(x - c, y - c, half, radius);
+        let body = smooth(edge, -edge, d);
+        let shadow = smooth(s * 0.028, -s * 0.004, rounded_rect(x - c, y - c - s * 0.016, half * 0.985, radius)) * 0.24;
+        if body <= 0.0 {
+            return [0.0, 0.0, 0.0, shadow];
         }
-        let t = (y / s).clamp(0.0, 1.0);
-        let mut rgb = mix(top, bottom, t);
-        // A gentle diagonal gloss across the upper third.
-        let gloss = (1.0 - ((x + y) / (s * 1.4))).clamp(0.0, 1.0).powf(2.2) * 0.18;
-        rgb = [(rgb[0] + gloss).min(1.0), (rgb[1] + gloss).min(1.0), (rgb[2] + gloss).min(1.0)];
-        // Three faint lanes behind the arrow.
-        let lane = lane_mask(x, y, s) * 0.08;
-        rgb = [(rgb[0] + lane).min(1.0), (rgb[1] + lane).min(1.0), (rgb[2] + lane).min(1.0)];
-        // The white download arrow on top.
-        let arrow = arrow_mask(x, y, s);
-        rgb = mix(rgb, [1.0, 1.0, 1.0], arrow);
-        [rgb[0], rgb[1], rgb[2], inside]
+        let alpha = body + shadow * (1.0 - body);
+        let over = |c: f32| c * body / alpha;
+        if let Some(art) = art {
+            let rgb = art.at((x - (c - half)) / (2.0 * half), (y - (c - half)) / (2.0 * half));
+            return [over(rgb[0]), over(rgb[1]), over(rgb[2]), alpha];
+        }
+        // Lighter at the top, with a soft light from the upper left, as glass under a lamp.
+        let v = ((y - (c - half)) / (2.0 * half)).clamp(0.0, 1.0);
+        let mut rgb = mix(top, bottom, v.powf(0.9));
+        let (lx, ly) = ((x - (c - half * 0.6)) / half, (y - (c - half * 0.9)) / half);
+        rgb = mix(rgb, [1.0, 1.0, 1.0], (1.0 - (lx * lx + ly * ly).sqrt() * 0.75).clamp(0.0, 1.0).powf(2.0) * 0.22);
+        // The glass's rim: a thin light just inside the edge, bright at the top and faint at the bottom.
+        let rim = smooth(s * 0.012, 0.0, -d) * (0.10 + 0.55 * (1.0 - v).powf(2.0));
+        rgb = mix(rgb, [1.0, 1.0, 1.0], rim);
+        // The glyph, with a soft shadow of its own a little below it.
+        let (ox, oy, k) = (c - half, c - half, 2.0 * half);
+        let lift = smooth(s * 0.05, -s * 0.005, glyph(x, y - s * 0.012, ox, oy, k, 0.046)) * 0.26;
+        rgb = mix(rgb, [0.0, 0.12, 0.45], lift);
+        let ink = smooth(edge, -edge, glyph(x, y, ox, oy, k, 0.046));
+        rgb = mix(rgb, mix([1.0, 1.0, 1.0], [0.88, 0.93, 1.0], v), ink);
+        // The body over its shadow.
+        [over(rgb[0]), over(rgb[1]), over(rgb[2]), alpha]
     });
     render(big, size, &shade)
 }
@@ -49,64 +134,25 @@ fn app_icon(size: usize) -> Image {
 fn tray(size: usize) -> Image {
     let big = size * SS;
     let s = big as f32;
-    // A black arrow on transparent: macOS tints a template icon itself.
-    let shade: Shade = Box::new(move |x, y| {
-        let a = arrow_mask(x, y, s);
-        [0.0, 0.0, 0.0, a]
-    });
+    // A black glyph on transparent, filling the square: macOS tints a template icon itself.
+    let k = s * 1.3;
+    let (ox, oy) = (s * 0.5 - k * 0.5, s * 0.5 - k * 0.51);
+    let shade: Shade = Box::new(move |x, y| [0.0, 0.0, 0.0, smooth(SS as f32 * 0.75, -(SS as f32) * 0.75, glyph(x, y, ox, oy, k, 0.042))]);
     render(big, size, &shade)
 }
 
-/// The white download glyph: a vertical stem, a solid arrowhead, and a tray line under it.
-fn arrow_mask(x: f32, y: f32, s: f32) -> f32 {
-    let cx = s * 0.5;
-    let stem = band(x, cx, s * 0.085) * span(y, s * 0.22, s * 0.47);
-    let head = triangle(x, y, (cx - s * 0.185, s * 0.44), (cx + s * 0.185, s * 0.44), (cx, s * 0.66));
-    let tray = band(y, s * 0.745, s * 0.05) * span(x, s * 0.30, s * 0.70);
-    (stem.max(head) + tray).min(1.0)
+/// The distance from `(px, py)` to the segment from `a` to `b`.
+fn segment(px: f32, py: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
+    let (bx, by) = (b.0 - a.0, b.1 - a.1);
+    let t = (((px - a.0) * bx + (py - a.1) * by) / (bx * bx + by * by).max(1e-6)).clamp(0.0, 1.0);
+    (px - a.0 - t * bx).hypot(py - a.1 - t * by)
 }
 
-/// Soft coverage of a filled triangle, whatever the winding of its three points: a point is inside when it falls on
-/// the same side of all three edges, so the interior distance is the larger of "all positive" and "all negative".
-fn triangle(px: f32, py: f32, a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
-    let edge = |p: (f32, f32), q: (f32, f32)| {
-        let (ex, ey) = (q.0 - p.0, q.1 - p.1);
-        let len = (ex * ex + ey * ey).sqrt().max(1e-6);
-        ((px - p.0) * ey - (py - p.1) * ex) / len
-    };
-    let (d1, d2, d3) = (edge(a, b), edge(b, c), edge(c, a));
-    let inside = d1.min(d2).min(d3).max(-(d1.max(d2).max(d3)));
-    smooth(-1.5, 1.5, inside)
-}
-
-/// Three dim vertical lanes behind the glyph.
-fn lane_mask(x: f32, y: f32, s: f32) -> f32 {
-    let w = s * 0.045;
-    let mut m: f32 = 0.0;
-    for cx in [0.34, 0.5, 0.66] {
-        m = m.max(band(x, s * cx, w) * span(y, s * 0.20, s * 0.74));
-    }
-    m
-}
-
-/// A soft-edged band of half-width `w` around `centre` in one axis.
-fn band(v: f32, centre: f32, w: f32) -> f32 {
-    let d = (v - centre).abs();
-    smooth(w + 1.5, w - 1.5, d)
-}
-
-/// 1 inside `[lo, hi]` with a soft edge.
-fn span(v: f32, lo: f32, hi: f32) -> f32 {
-    smooth(lo - 1.5, lo + 1.5, v) * smooth(hi + 1.5, hi - 1.5, v)
-}
-
-/// Coverage of a rounded square of side `s` and corner `r`, 1 inside, 0 outside, soft at the edge.
-fn rounded_coverage(x: f32, y: f32, s: f32, r: f32) -> f32 {
-    let dx = (x - s * 0.5).abs() - (s * 0.5 - r);
-    let dy = (y - s * 0.5).abs() - (s * 0.5 - r);
-    let outside = dx.max(0.0).hypot(dy.max(0.0)) - r;
-    let inside = dx.max(dy).min(0.0);
-    smooth(1.5, -1.5, outside + inside)
+/// The signed distance to a rounded square of half-side `half` and corner `r` centred on the origin, negative inside.
+fn rounded_rect(x: f32, y: f32, half: f32, r: f32) -> f32 {
+    let dx = x.abs() - (half - r);
+    let dy = y.abs() - (half - r);
+    dx.max(0.0).hypot(dy.max(0.0)) + dx.max(dy).min(0.0) - r
 }
 
 /// A smoothstep from 0 at `edge0` to 1 at `edge1` (either order).
@@ -126,7 +172,7 @@ struct Image {
 
 /// Renders the shade at `big = size*SS`, then box-filters down to `size`, straight-alpha to premultiplied and back
 /// so the edges do not darken.
-fn render(big: usize, size: usize, shade: &Shade) -> Image {
+fn render(big: usize, size: usize, shade: &Shade<'_>) -> Image {
     let mut src = vec![0.0f32; big * big * 4];
     for y in 0..big {
         for x in 0..big {

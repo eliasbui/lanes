@@ -5,9 +5,10 @@
 //! the app carries, since few players open a bare .ts (`engine::Engine::run_hls`, `engine::settle`).
 //!
 //! Plain or AES-128 segments, MPEG-TS or fragmented MP4, whole files or byte ranges of one. Never DRM: a SAMPLE-AES or
-//! other protected stream is refused.
-//! ponytail: no live streams, and a separate audio rendition is not joined to the video (that needs a muxer such as
-//! ffmpeg); add them when a site the user needs depends on one.
+//! other protected stream is refused. A resolution whose sound is a playlist of its own (`Variant::audio`) has that
+//! playlist downloaded beside it and joined to it by ffmpeg.
+//! ponytail: no live streams, and one sound per video, its group's default; add a choice of language when a site
+//! the user needs offers several.
 
 use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
 use serde::Serialize;
@@ -23,8 +24,8 @@ pub struct Variant {
     pub url: String,
     pub height: Option<u32>,
     pub bandwidth: Option<u64>,
-    /// The sound is in a playlist of its own, which is not joined to this video.
-    pub separate_audio: bool,
+    /// The playlist of its sound, when that is apart from the picture: its group's default, else the group's first.
+    pub audio: Option<String>,
 }
 
 /// The AES-128 key of a run of segments, and its IV when the playlist gives one.
@@ -118,7 +119,8 @@ pub fn parse(text: &str, base: &str) -> Result<Playlist, String> {
 
     if text.contains("#EXT-X-STREAM-INF") {
         let mut renditions = Vec::new();
-        let mut audio_groups = Vec::new();
+        // Each sound playlist with its group and whether it is the group's default.
+        let mut sounds: Vec<(String, String, bool)> = Vec::new();
         let mut found: Vec<(Variant, Option<String>)> = Vec::new();
         let mut pending = None;
         for line in lines {
@@ -126,8 +128,8 @@ pub fn parse(text: &str, base: &str) -> Result<Playlist, String> {
                 let list = attributes(list);
                 if let Some(uri) = attribute(&list, "URI") {
                     renditions.push(join(uri)?);
-                    if attribute(&list, "TYPE") == Some("AUDIO") {
-                        audio_groups.extend(attribute(&list, "GROUP-ID").map(str::to_owned));
+                    if let (Some("AUDIO"), Some(group)) = (attribute(&list, "TYPE"), attribute(&list, "GROUP-ID")) {
+                        sounds.push((group.to_owned(), join(uri)?, attribute(&list, "DEFAULT") == Some("YES")));
                     }
                 }
             } else if let Some(list) = line.strip_prefix("#EXT-X-STREAM-INF:") {
@@ -136,7 +138,7 @@ pub fn parse(text: &str, base: &str) -> Result<Playlist, String> {
                 if let Some(list) = pending.take() {
                     let height = attribute(&list, "RESOLUTION").and_then(|r| r.split_once(['x', 'X'])).and_then(|(_, h)| h.parse().ok());
                     let bandwidth = attribute(&list, "BANDWIDTH").and_then(|b| b.parse().ok());
-                    let variant = Variant { url: join(line)?, height, bandwidth, separate_audio: false };
+                    let variant = Variant { url: join(line)?, height, bandwidth, audio: None };
                     found.push((variant, attribute(&list, "AUDIO").map(str::to_owned)));
                 }
             }
@@ -144,7 +146,8 @@ pub fn parse(text: &str, base: &str) -> Result<Playlist, String> {
         let mut variants: Vec<Variant> = found
             .into_iter()
             .map(|(mut v, group)| {
-                v.separate_audio = group.is_some_and(|g| audio_groups.contains(&g));
+                let group: Vec<&(String, String, bool)> = sounds.iter().filter(|(g, ..)| Some(g) == group.as_ref()).collect();
+                v.audio = group.iter().find(|(.., default)| *default).or(group.first()).map(|(_, uri, _)| uri.clone());
                 v
             })
             .collect();
@@ -246,8 +249,9 @@ fn fetch(url: &str, origin: &str, headers: &[(String, String)]) -> Result<(Strin
     Ok((base, text))
 }
 
-/// The media playlist at `url`, which a master must not lead to again.
-fn media_at(url: &str, origin: &str, headers: &[(String, String)]) -> Result<Media, String> {
+/// The media playlist at `url`, which a master must not lead to again. `origin` is the address the headers were
+/// chosen for, so a cookie among them goes only to its host.
+pub fn media_at(url: &str, origin: &str, headers: &[(String, String)]) -> Result<Media, String> {
     let (base, text) = fetch(url, origin, headers)?;
     match parse(&text, &base)? {
         Playlist::Media(media) => Ok(media),
@@ -270,7 +274,7 @@ pub fn choices(url: &str, headers: &[(String, String)]) -> Result<Choices, Strin
     let (base, text) = fetch(url, url, headers)?;
     match parse(&text, &base)? {
         Playlist::Media(media) => Ok(Choices {
-            variants: vec![Variant { url: url.to_owned(), height: None, bandwidth: None, separate_audio: false }],
+            variants: vec![Variant { url: url.to_owned(), height: None, bandwidth: None, audio: None }],
             renditions: Vec::new(),
             duration: media.duration,
             ext: "mp4",
@@ -303,8 +307,10 @@ mod tests {
     use super::*;
 
     const MASTER: &str = "#EXTM3U
-#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"en\",URI=\"audio/en.m3u8\"
-#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360,CODECS=\"avc1.4d401e,mp4a.40.2\"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"vi\",URI=\"audio/vi.m3u8\"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",NAME=\"en\",DEFAULT=YES,URI=\"audio/en.m3u8\"
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"low\",NAME=\"en\",URI=\"audio/low.m3u8\"
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360,CODECS=\"avc1.4d401e,mp4a.40.2\",AUDIO=\"low\"
 360/index.m3u8
 #EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=90000,URI=\"iframes.m3u8\"
 #EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,AUDIO=\"aac\"
@@ -321,12 +327,13 @@ https://cdn.example/1080/index.m3u8?t=1
         let heights: Vec<_> = variants.iter().map(|v| v.height).collect();
         assert_eq!(heights, vec![Some(1080), Some(720), Some(360)]);
         assert_eq!(variants[0].url, "https://cdn.example/1080/index.m3u8?t=1");
-        assert!(variants[0].separate_audio, "the 1080p sound is in audio/en.m3u8");
+        assert_eq!(variants[0].audio.as_deref(), Some("https://site.example/v/audio/en.m3u8"), "its group's default sound");
         assert_eq!(variants[1].url, "https://site.example/abs/720.m3u8");
-        assert!(!variants[1].separate_audio);
+        assert_eq!(variants[1].audio, None, "the sound is in the picture's own segments");
         assert_eq!(variants[2].url, "https://site.example/v/360/index.m3u8");
         assert_eq!(variants[2].bandwidth, Some(800_000));
-        assert_eq!(renditions, vec!["https://site.example/v/audio/en.m3u8".to_string()]);
+        assert_eq!(variants[2].audio.as_deref(), Some("https://site.example/v/audio/low.m3u8"), "a group with no default gives its first");
+        assert_eq!(renditions.len(), 3);
     }
 
     #[test]

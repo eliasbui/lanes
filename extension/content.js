@@ -14,7 +14,7 @@
   // How long the button stays once a video starts playing, so it is seen without looking for it.
   const SHOW_ON_PLAY = 4000;
   // The button's size and its distance from the video's corner.
-  const BUTTON = 40;
+  const BUTTON = 30;
   const INSET = 12;
   const GAP = 8;
   const RING = 2 * Math.PI * 15.5;
@@ -101,20 +101,20 @@
     <style>
       ${GLASS}
       .box { position: absolute; top: 0; left: 0; transform: translateX(-100%); color: #fff; }
+      /* The button is the blue disc alone, with no ring around it: a shadow lifts it off a light video. */
       .go {
         all: unset; cursor: pointer; position: relative; width: ${BUTTON}px; height: ${BUTTON}px; border-radius: 50%;
         display: grid; place-items: center; transition: transform 0.15s ease;
-        background: rgba(20, 22, 30, 0.35); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
         animation: appear 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.3);
       }
-      .go .tile { width: ${BUTTON - 8}px; height: ${BUTTON - 8}px; transition: background 0.2s ease; }
-      .go svg { width: 18px; height: 18px; }
+      .go .tile { width: 100%; height: 100%; box-shadow: 0 2px 8px rgba(0, 30, 110, 0.38); transition: background 0.2s ease; }
+      .go svg { width: 15px; height: 15px; }
       .go:hover { transform: scale(1.08); }
       .go:active { transform: scale(0.94); }
       .go:focus-visible, .item:focus-visible { outline: 2px solid #0a84ff; outline-offset: 2px; }
-      /* A ring that spreads from the button when it comes up for a video that started playing. */
+      /* A soft glow that spreads from the button when it comes up for a video that started playing. */
       .go.call::after {
-        content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid #2b93ff;
+        content: ""; position: absolute; inset: 0; z-index: -1; border-radius: 50%; background: rgba(43, 147, 255, 0.45);
         animation: call 1.4s ease-out 2;
       }
       .go.sent .tile { background: linear-gradient(160deg, #3ddc84, #1a9e4b); }

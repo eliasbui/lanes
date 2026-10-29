@@ -23,7 +23,8 @@ pub struct Row {
     pub sources: String,
     /// An HLS video from the browser's video button: `url` is its playlist.
     pub hls: bool,
-    /// The yt-dlp format of a video page from the video button: `url` is the page. Empty for anything else.
+    /// The yt-dlp format of a video page from the video button: `url` is the page. For an HLS playlist, the playlist of
+    /// its sound when that is apart from the picture. Empty for anything else.
     pub format: String,
 }
 
@@ -40,8 +41,8 @@ impl Row {
     /// The mirror pool for the engine: the stored list, or just the primary URL when none was stored.
     pub fn kind(&self) -> Kind {
         match (self.hls, self.format.is_empty()) {
-            (_, false) => Kind::Page { format: self.format.clone() },
-            (true, true) => Kind::Hls,
+            (true, _) => Kind::Hls { audio: self.format.clone() },
+            (false, false) => Kind::Page { format: self.format.clone() },
             (false, true) => Kind::File,
         }
     }
@@ -90,11 +91,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 pub fn add(db: &Connection, url: &str, filename: &str, dir: &str, headers: &str, sources: &str, kind: &Kind, now: i64) -> rusqlite::Result<i64> {
     let format = match kind {
         Kind::Page { format } => format.as_str(),
-        _ => "",
+        Kind::Hls { audio } => audio.as_str(),
+        Kind::File => "",
     };
     db.execute(
         "INSERT INTO downloads (url, filename, dir, size, status, added_at, headers, sources, hls, format) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![url, filename, dir, state::QUEUED, now, headers, sources, *kind == Kind::Hls, format],
+        params![url, filename, dir, state::QUEUED, now, headers, sources, matches!(kind, Kind::Hls { .. }), format],
     )?;
     Ok(db.last_insert_rowid())
 }
@@ -192,8 +194,9 @@ mod tests {
         let old = &list(&db).unwrap()[0];
         assert_eq!(old.kind(), Kind::File);
         assert_eq!(old.source_list(), vec!["https://x.com/a".to_string()]);
-        let id = add(&db, "https://x.com/v.m3u8", "v.ts", "/tmp", "[]", "[]", &Kind::Hls, 2).unwrap();
-        assert_eq!(get(&db, id).unwrap().unwrap().kind(), Kind::Hls);
+        let hls = Kind::Hls { audio: "https://x.com/en.m3u8".into() };
+        let id = add(&db, "https://x.com/v.m3u8", "v.mp4", "/tmp", "[]", "[]", &hls, 2).unwrap();
+        assert_eq!(get(&db, id).unwrap().unwrap().kind(), hls, "the sound's playlist is kept with it");
         let page = Kind::Page { format: "136+140".into() };
         let id = add(&db, "https://youtube.com/watch?v=x", "v.mp4", "/tmp", "[]", "[]", &page, 3).unwrap();
         assert_eq!(get(&db, id).unwrap().unwrap().kind(), page);
