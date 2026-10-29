@@ -85,7 +85,9 @@ tiếng Việt.
 - **Chỉnh số kết nối**, mở cùng máy tính, và tự cập nhật trong app.
 - **Cửa sổ kiểu Mac**, sáng và tối, theo hệ thống: sidebar nổi xếp download theo trạng thái và theo loại tệp, chứa
   ba nút của cửa sổ; ô tìm kiếm; danh sách như Finder có menu chuột phải và phím tắt của danh sách trên Mac; Cài đặt
-  chia nhóm như System Settings.
+  có tab riêng (Chung, Giao diện, Tải xuống, Hàng đợi, Mạng), chia nhóm như System Settings.
+- **Tiếng Việt hoặc tiếng Anh** cho cửa sổ, menu và thông báo, và giao diện **sáng, tối hoặc theo hệ thống**.
+- **Liquid Glass (beta).** Sidebar, thanh công cụ và các bảng thành kính mờ trên nền màu nhẹ.
 
 ## Cài đặt
 

@@ -4,10 +4,25 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Lanes</title>
+    <script>
+      // The app puts the language, the light or dark and the glass of the settings on the root (main.rs `page`); the
+      // classes the styles follow are set from them here, before the first frame, and again when the system changes.
+      (() => {
+        const root = document.documentElement;
+        const system = matchMedia("(prefers-color-scheme: dark)");
+        window.paintTheme = () => {
+          const theme = root.dataset.theme || "system";
+          root.classList.toggle("dark", theme === "dark" || (theme !== "light" && system.matches));
+          root.classList.toggle("glass", root.hasAttribute("data-glass"));
+        };
+        paintTheme();
+        system.addEventListener("change", paintTheme);
+      })();
+    </script>
     <style>
       /* macOS colours: the system's own where WebKit names them (the user's accent), Apple's values elsewhere. */
       :root {
-        color-scheme: light dark;
+        color-scheme: light;
         --accent: #007aff;
         --window: #ffffff;
         --sidebar: rgba(242, 242, 245, 0.94);
@@ -32,6 +47,8 @@
         --group-stroke: rgba(0, 0, 0, 0.06);
         --track: rgba(0, 0, 0, 0.1);
         --menu: rgba(246, 246, 246, 0.88);
+        --content: transparent;
+        --rim: transparent;
         --red: #ff3b30;
         --green: #28cd41;
         --shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
@@ -39,35 +56,65 @@
       @supports (color: -apple-system-control-accent) {
         :root { --accent: -apple-system-control-accent; }
       }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --window: #1e1e1e;
-          --sidebar: rgba(46, 46, 48, 0.94);
-          --sidebar-stroke: rgba(255, 255, 255, 0.07);
-          --label: rgba(255, 255, 255, 0.9);
-          --secondary: rgba(255, 255, 255, 0.55);
-          --tertiary: rgba(255, 255, 255, 0.28);
-          --separator: rgba(255, 255, 255, 0.08);
-          --hover: rgba(255, 255, 255, 0.06);
-          --pressed: rgba(255, 255, 255, 0.12);
-          --selected: rgba(255, 255, 255, 0.1);
-          --glass: rgba(58, 58, 60, 0.8);
-          --glass-stroke: rgba(255, 255, 255, 0.09);
-          --field: rgba(255, 255, 255, 0.08);
-          --field-stroke: rgba(255, 255, 255, 0.1);
-          --field-bg: rgba(255, 255, 255, 0.06);
-          --btn: rgba(255, 255, 255, 0.13);
-          --btn-stroke: rgba(255, 255, 255, 0.06);
-          --panel: #2a2a2c;
-          --panel-stroke: rgba(255, 255, 255, 0.1);
-          --group: rgba(255, 255, 255, 0.05);
-          --group-stroke: rgba(255, 255, 255, 0.05);
-          --track: rgba(255, 255, 255, 0.14);
-          --menu: rgba(42, 42, 44, 0.88);
-          --red: #ff453a;
-          --green: #32d74b;
-          --shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-        }
+      /* Dark, when the user or the system asks for it (the root's class, set by the script in the head). */
+      :root.dark {
+        color-scheme: dark;
+        --window: #1e1e1e;
+        --sidebar: rgba(46, 46, 48, 0.94);
+        --sidebar-stroke: rgba(255, 255, 255, 0.07);
+        --label: rgba(255, 255, 255, 0.9);
+        --secondary: rgba(255, 255, 255, 0.55);
+        --tertiary: rgba(255, 255, 255, 0.28);
+        --separator: rgba(255, 255, 255, 0.08);
+        --hover: rgba(255, 255, 255, 0.06);
+        --pressed: rgba(255, 255, 255, 0.12);
+        --selected: rgba(255, 255, 255, 0.1);
+        --glass: rgba(58, 58, 60, 0.8);
+        --glass-stroke: rgba(255, 255, 255, 0.09);
+        --field: rgba(255, 255, 255, 0.08);
+        --field-stroke: rgba(255, 255, 255, 0.1);
+        --field-bg: rgba(255, 255, 255, 0.06);
+        --btn: rgba(255, 255, 255, 0.13);
+        --btn-stroke: rgba(255, 255, 255, 0.06);
+        --panel: #2a2a2c;
+        --panel-stroke: rgba(255, 255, 255, 0.1);
+        --group: rgba(255, 255, 255, 0.05);
+        --group-stroke: rgba(255, 255, 255, 0.05);
+        --track: rgba(255, 255, 255, 0.14);
+        --menu: rgba(42, 42, 44, 0.88);
+        --red: #ff453a;
+        --green: #32d74b;
+        --shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+      }
+      /* Liquid Glass (beta): the sidebar, the toolbar's capsules, the sheets and the groups of Settings turn to frosted
+         glass with a light along their top edge, over a soft coloured backdrop that the content lets through. */
+      :root.glass {
+        --window: #e8eef8;
+        --sidebar: rgba(255, 255, 255, 0.42);
+        --sidebar-stroke: rgba(255, 255, 255, 0.55);
+        --glass: rgba(255, 255, 255, 0.5);
+        --glass-stroke: rgba(255, 255, 255, 0.6);
+        --panel: rgba(250, 250, 252, 0.72);
+        --group: rgba(255, 255, 255, 0.55);
+        --group-stroke: rgba(255, 255, 255, 0.6);
+        --menu: rgba(250, 250, 252, 0.66);
+        --content: rgba(255, 255, 255, 0.55);
+        --rim: rgba(255, 255, 255, 0.75);
+        --field-bg: rgba(255, 255, 255, 0.7);
+      }
+      :root.glass.dark {
+        --window: #0f1117;
+        --sidebar: rgba(44, 46, 54, 0.42);
+        --sidebar-stroke: rgba(255, 255, 255, 0.12);
+        --glass: rgba(60, 62, 72, 0.45);
+        --glass-stroke: rgba(255, 255, 255, 0.12);
+        --panel: rgba(36, 38, 44, 0.72);
+        --group: rgba(255, 255, 255, 0.06);
+        --group-stroke: rgba(255, 255, 255, 0.1);
+        --menu: rgba(40, 42, 48, 0.66);
+        --content: rgba(24, 25, 30, 0.5);
+        --rim: rgba(255, 255, 255, 0.22);
+        --field-bg: rgba(255, 255, 255, 0.07);
       }
 
       * { box-sizing: border-box; }
@@ -91,6 +138,23 @@
       html:not(.mac) ::-webkit-scrollbar { width: 10px; }
       html:not(.mac) ::-webkit-scrollbar-thumb { background: var(--track); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
 
+      /* The coloured light under the glass. */
+      .backdrop { display: none; position: fixed; inset: -15%; z-index: -1; filter: blur(70px) saturate(140%); }
+      .glass .backdrop {
+        display: block;
+        background:
+          radial-gradient(38% 40% at 16% 20%, #7cc0ff 0%, transparent 62%),
+          radial-gradient(36% 38% at 86% 14%, #c3a2ff 0%, transparent 62%),
+          radial-gradient(44% 44% at 74% 86%, #5fe0ff 0%, transparent 64%),
+          radial-gradient(40% 40% at 22% 88%, #9af5d4 0%, transparent 62%);
+      }
+      .glass.dark .backdrop { opacity: 0.45; }
+      .glass .sidebar, .glass .capsule, .glass .panel, .glass .ctx, .glass .toast, .glass .banner, .glass .group {
+        -webkit-backdrop-filter: blur(30px) saturate(190%); backdrop-filter: blur(30px) saturate(190%);
+      }
+      .glass .sidebar, .glass .capsule, .glass .panel, .glass .group { box-shadow: inset 0 1px 0 var(--rim), 0 0 0 0.5px var(--glass-stroke), 0 8px 28px rgba(20, 30, 60, 0.12); }
+      .glass main { background: var(--content); }
+
       .app { display: grid; grid-template-columns: 228px minmax(0, 1fr); height: 100%; }
 
       /* The sidebar floats inset in the window, as on macOS 26, and holds the window's buttons at its top. */
@@ -104,6 +168,7 @@
       .side-top { height: 10px; flex: none; }
       .mac .side-top { height: 44px; }
       nav { flex: 1; overflow-y: auto; padding: 0 10px 10px; }
+      .side-foot { flex: none; padding: 6px 10px 10px; border-top: 1px solid var(--separator); }
       .section { font-size: 11px; font-weight: 600; color: var(--secondary); padding: 12px 8px 4px; }
       .nav-item {
         display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px;
@@ -115,6 +180,8 @@
       .nav-item .count { margin-left: auto; color: var(--secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 
       main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+      /* The list and Settings share the window; each shows what is its own. */
+      main.settings .list-only, main:not(.settings) .settings-only { display: none !important; }
 
       .toolbar { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 20px; }
       .titles { min-width: 0; display: flex; flex-direction: column; }
@@ -134,11 +201,14 @@
       .tb:active { background: var(--pressed); }
       .tb:disabled { opacity: 0.35; background: transparent; }
       .tb svg { width: 17px; height: 17px; }
+      .tb.tab { padding: 0 12px; font-weight: 500; }
+      .tb.tab svg { width: 15px; height: 15px; }
+      .tb.tab.on { background: var(--btn); box-shadow: 0 0 0 0.5px var(--btn-stroke), 0 1px 2px rgba(0, 0, 0, 0.12); }
       .search { width: 210px; height: 34px; padding: 0 12px; gap: 6px; }
       .search svg { width: 15px; height: 15px; color: var(--secondary); flex: none; }
       .search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: inherit; color: var(--label); }
       .search input::placeholder { color: var(--secondary); }
-      @media (max-width: 760px) { .search { width: 140px; } }
+      @media (max-width: 760px) { .search { width: 140px; } .tb.tab span { display: none; } }
 
       .scroll { flex: 1; overflow-y: auto; padding: 2px 12px 12px; }
 
@@ -196,7 +266,6 @@
       .push:active { filter: brightness(0.94); }
       .push.primary { background: var(--accent); color: #fff; box-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.15); }
       .push:disabled { opacity: 0.5; }
-      .push.small { height: 24px; padding: 0 11px; font-size: 12px; }
       .field {
         height: 28px; padding: 0 10px; border: 0; border-radius: 8px; outline: none; background: var(--field-bg); color: var(--label);
         font: inherit; box-shadow: 0 0 0 0.5px var(--field-stroke), inset 0 0.5px 1px rgba(0, 0, 0, 0.05); min-width: 0;
@@ -227,8 +296,9 @@
         box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.28);
       }
 
-      .segmented { display: flex; padding: 2px; border-radius: 999px; background: var(--field); margin-bottom: 12px; }
-      .seg { flex: 1; height: 24px; border: 0; border-radius: 999px; background: transparent; font-weight: 500; }
+      .segmented { display: flex; padding: 2px; border-radius: 999px; background: var(--field); }
+      .panel .segmented { margin-bottom: 12px; }
+      .seg { flex: 1; height: 24px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; font-weight: 500; white-space: nowrap; }
       .seg.on { background: var(--btn); box-shadow: 0 0 0 0.5px var(--btn-stroke), 0 1px 2px rgba(0, 0, 0, 0.12); }
 
       /* Sheets come down from the top of the window, over a dimmed one. */
@@ -239,17 +309,15 @@
         box-shadow: 0 0 0 0.5px var(--panel-stroke), 0 22px 70px rgba(0, 0, 0, 0.3);
         animation: sheet 0.24s cubic-bezier(0.32, 0.72, 0, 1);
       }
-      .panel.wide-panel { width: min(580px, 100%); padding: 0; }
       @keyframes sheet { from { transform: translateY(-14px) scale(0.98); opacity: 0; } }
       .panel h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
       .lead { margin: 0 0 14px; color: var(--secondary); }
       .hint { margin: 8px 0 0; color: var(--secondary); font-size: 11.5px; }
       .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
-      /* Settings, grouped rows as in System Settings. */
-      .panel-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 12px 20px; background: var(--panel); border-bottom: 1px solid var(--separator); }
-      .panel-head h2 { margin: 0; }
-      .panel-body { padding: 4px 20px 20px; }
+      /* Settings, a tab at a time, grouped rows as in System Settings. */
+      .settings-page { max-width: 640px; margin: 0 auto; padding: 0 8px 24px; }
+      .tab-page:not(.on) { display: none; }
       .group-title { font-size: 12px; font-weight: 600; color: var(--secondary); margin: 16px 4px 6px; }
       .group { background: var(--group); border-radius: 12px; box-shadow: 0 0 0 0.5px var(--group-stroke); }
       .item { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; min-height: 42px; }
@@ -301,50 +369,181 @@
     </style>
   </head>
   <body>
+    <div class="backdrop"></div>
     <div class="app">
       <aside class="sidebar">
         <div class="side-top drag"></div>
         <nav id="nav"></nav>
+        <div class="side-foot">
+          <button class="nav-item" data-view="settings">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.7 7.7 0 000-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 00-1.7-1l-.4-2.5h-4l-.4 2.5a7.6 7.6 0 00-1.7 1l-2.4-1-2 3.4L4.6 11a7.7 7.7 0 000 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.4 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+            <span data-t="settings"></span>
+          </button>
+        </div>
       </aside>
 
-      <main>
+      <main id="main">
         <header class="toolbar drag">
           <div class="titles">
-            <h1 id="title">Tất cả</h1>
+            <h1 id="title"></h1>
             <span id="subtitle"></span>
           </div>
           <div class="spacer"></div>
-          <div class="capsule">
-            <button class="tb" id="pauseAll" title="Tạm dừng tất cả" aria-label="Tạm dừng tất cả">
+          <div class="capsule list-only">
+            <button class="tb" id="pauseAll" data-tt="pauseAll">
               <svg viewBox="0 0 24 24" fill="none"><path d="M9 6.5v11M15 6.5v11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             </button>
-            <button class="tb" id="resumeAll" title="Tiếp tục tất cả" aria-label="Tiếp tục tất cả">
+            <button class="tb" id="resumeAll" data-tt="resumeAll">
               <svg viewBox="0 0 24 24" fill="none"><path d="M8.5 6.2v11.6a.6.6 0 00.9.5l9.1-5.8a.6.6 0 000-1L9.4 5.7a.6.6 0 00-.9.5z" fill="currentColor"/></svg>
             </button>
           </div>
-          <div class="capsule">
-            <button class="tb" id="addOpen" title="Thêm liên kết (Cmd+N)" aria-label="Thêm liên kết">
+          <div class="capsule list-only">
+            <button class="tb" id="addOpen" data-tt="addTip">
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 5.5v13M5.5 12h13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             </button>
           </div>
-          <label class="capsule search">
+          <label class="capsule search list-only">
             <svg viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6" stroke="currentColor" stroke-width="2"/><path d="M15 15l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            <input id="search" type="search" placeholder="Tìm kiếm" autocomplete="off" spellcheck="false" />
+            <input id="search" type="search" data-tp="search" autocomplete="off" spellcheck="false" />
           </label>
-          <div class="capsule">
-            <button class="tb" id="gear" title="Cài đặt (Cmd+,)" aria-label="Cài đặt">
+          <div class="capsule list-only">
+            <button class="tb" id="gear" data-tt="settingsTip">
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.7 7.7 0 000-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 00-1.7-1l-.4-2.5h-4l-.4 2.5a7.6 7.6 0 00-1.7 1l-2.4-1-2 3.4L4.6 11a7.7 7.7 0 000 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.4 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
             </button>
           </div>
+          <div class="capsule settings-only" id="tabs" role="tablist"></div>
+          <div class="spacer settings-only"></div>
         </header>
 
-        <div class="scroll" id="scroll">
-          <div id="list" role="listbox" aria-label="Danh sách tải"></div>
+        <div class="scroll list-only" id="scroll">
+          <div id="list" role="listbox" data-tl="downloads"></div>
           <div class="empty" id="empty">
             <svg viewBox="0 0 24 24" fill="none"><path d="M4 13.5l2.2-7.1A2 2 0 018.1 5h7.8a2 2 0 011.9 1.4l2.2 7.1V18a2 2 0 01-2 2H6a2 2 0 01-2-2v-4.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M4 13.5h4.5l1 2h5l1-2H20" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
-            <h2 id="emptyTitle">Chưa có gì tải</h2>
-            <p id="emptyText">Dán một liên kết, hoặc tải từ trình duyệt qua tiện ích Lanes.</p>
-            <button class="push primary" id="emptyAdd">Thêm liên kết</button>
+            <h2 id="emptyTitle"></h2>
+            <p id="emptyText"></p>
+            <button class="push primary" id="emptyAdd" data-t="addLink"></button>
+          </div>
+        </div>
+
+        <div class="scroll settings-only">
+          <div class="settings-page">
+            <section class="tab-page" data-tab="general">
+              <div class="group-title" data-t="tabGeneral"></div>
+              <div class="group">
+                <div class="item">
+                  <div class="label"><span data-t="autostart"></span><small data-t="autostartHint"></small></div>
+                  <div class="control"><label class="switch"><input type="checkbox" id="autostart" /><span class="knob"></span></label></div>
+                </div>
+                <div class="item">
+                  <div class="label"><span data-t="clipboard"></span><small data-t="clipboardHint"></small></div>
+                  <div class="control"><label class="switch"><input type="checkbox" id="watchClipboard" /><span class="knob"></span></label></div>
+                </div>
+                <div class="item stack">
+                  <div class="label"><span data-t="extension"></span><small data-t="extensionHint"></small></div>
+                  <div class="control"><input id="extPath" class="field" type="text" readonly spellcheck="false" /><button class="push" id="extOpen" data-t="openFolder"></button></div>
+                </div>
+              </div>
+              <div class="group-title" data-t="about"></div>
+              <div class="group">
+                <div class="item">
+                  <div class="label">Lanes <span id="version">-</span></div>
+                  <div class="control"><button class="push" id="checkUpdate" data-t="checkUpdate"></button></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="tab-page" data-tab="look">
+              <div class="group-title" data-t="tabLook"></div>
+              <div class="group">
+                <div class="item">
+                  <div class="label"><span data-t="language"></span><small data-t="languageHint"></small></div>
+                  <div class="control">
+                    <select id="language"><option value="vi">Tiếng Việt</option><option value="en">English</option></select>
+                  </div>
+                </div>
+                <div class="item">
+                  <div class="label"><span data-t="theme"></span><small data-t="themeHint"></small></div>
+                  <div class="control">
+                    <div class="segmented" id="theme">
+                      <button type="button" class="seg" data-theme="system" data-t="system"></button>
+                      <button type="button" class="seg" data-theme="light" data-t="light"></button>
+                      <button type="button" class="seg" data-theme="dark" data-t="dark"></button>
+                    </div>
+                  </div>
+                </div>
+                <div class="item">
+                  <div class="label"><span>Liquid Glass</span> <span class="beta">beta</span><small data-t="glassHint"></small></div>
+                  <div class="control"><label class="switch"><input type="checkbox" id="glass" /><span class="knob"></span></label></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="tab-page" data-tab="downloads">
+              <div class="group-title" data-t="tabDownloads"></div>
+              <div class="group">
+                <div class="item">
+                  <div class="label"><span data-t="conns"></span><small data-t="connsHint"></small></div>
+                  <div class="control"><input type="range" id="conns" min="1" max="32" step="1" /><span class="value" id="connsVal">8</span></div>
+                </div>
+                <div class="item stack">
+                  <div class="label" data-t="folder"></div>
+                  <div class="control"><input id="folder" class="field" type="text" spellcheck="false" /><button class="push" id="chooseFolder" data-t="choose"></button></div>
+                </div>
+                <div class="item">
+                  <div class="label"><span data-t="classify"></span><small data-t="classifyHint"></small></div>
+                  <div class="control"><label class="switch"><input type="checkbox" id="classify" /><span class="knob"></span></label></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="tab-page" data-tab="queue">
+              <div class="group-title" data-t="tabQueue"></div>
+              <div class="group">
+                <div class="item">
+                  <div class="label"><span data-t="maxActive"></span><small data-t="maxActiveHint"></small></div>
+                  <div class="control">
+                    <select id="maxActive">
+                      <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+                      <option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="0" data-t="unlimited"></option>
+                    </select>
+                  </div>
+                </div>
+                <div class="item">
+                  <div class="label"><span data-t="speed"></span><small data-t="speedHint"></small></div>
+                  <div class="control">
+                    <select id="speedLimit">
+                      <option value="0" data-t="unlimited"></option><option value="262144">256 KB/s</option><option value="524288">512 KB/s</option>
+                      <option value="1048576">1 MB/s</option><option value="2097152">2 MB/s</option><option value="5242880">5 MB/s</option>
+                      <option value="10485760">10 MB/s</option><option value="20971520">20 MB/s</option><option value="52428800">50 MB/s</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="item">
+                  <div class="label"><span data-t="schedule"></span><small id="scheduleNote"></small></div>
+                  <div class="control">
+                    <input id="scheduleTime" class="field" type="time" value="01:00" />
+                    <label class="switch"><input type="checkbox" id="scheduleOn" /><span class="knob"></span></label>
+                  </div>
+                </div>
+                <div class="item">
+                  <div class="label"><span data-t="whenDone"></span><small data-t="whenDoneHint"></small></div>
+                  <div class="control">
+                    <select id="whenDone"><option value="" data-t="nothing"></option><option value="sleep" data-t="sleep"></option><option value="shutdown" data-t="shutdown"></option></select>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="tab-page" data-tab="network">
+              <div class="group-title" data-t="tabNetwork"></div>
+              <div class="group">
+                <div class="item">
+                  <div class="label"><span data-t="netMerge"></span> <span class="beta">beta</span><small data-t="netMergeHint"></small></div>
+                  <div class="control"><label class="switch"><input type="checkbox" id="netMerge" /><span class="knob"></span></label></div>
+                </div>
+                <div class="item stack" id="netsItem" hidden><div class="nets" id="nets"></div></div>
+              </div>
+            </section>
           </div>
         </div>
       </main>
@@ -352,127 +551,32 @@
 
     <div class="modal" id="addModal">
       <form class="panel" id="addForm">
-        <h2>Thêm liên kết</h2>
-        <p class="lead">Lanes tải tệp qua nhiều kết nối cùng lúc và tiếp tục được khi dừng.</p>
+        <h2 data-t="addLink"></h2>
+        <p class="lead" data-t="addLead"></p>
         <div class="segmented">
-          <button type="button" class="seg on" data-mode="one">Một nguồn</button>
-          <button type="button" class="seg" data-mode="many">Nhiều nguồn <span class="beta">beta</span></button>
+          <button type="button" class="seg on" data-mode="one" data-t="one"></button>
+          <button type="button" class="seg" data-mode="many"><span data-t="many"></span> <span class="beta">beta</span></button>
         </div>
         <div id="oneBox">
           <input id="url" class="field wide" type="text" placeholder="https://" autocomplete="off" spellcheck="false" />
-          <p class="hint">Tải cả loạt tệp đánh số: ghi khoảng trong ngoặc vuông, như https://site.vn/anh[001-120].jpg hoặc tap[a-f].zip.</p>
+          <p class="hint" data-t="batchHint"></p>
         </div>
         <div id="manyBox" hidden>
-          <textarea id="mergeUrls" class="field wide" rows="4" spellcheck="false" placeholder="Mỗi dòng một liên kết mirror của cùng một file:&#10;https://mirror-1.example/file.iso&#10;https://mirror-2.example/file.iso"></textarea>
-          <p class="hint">net-merge: Lanes chia các đoạn cho từng nguồn và gộp băng thông, bỏ nguồn nào khác kích thước.</p>
+          <textarea id="mergeUrls" class="field wide" rows="4" spellcheck="false" data-tp="mirrors"></textarea>
+          <p class="hint" data-t="mirrorsHint"></p>
         </div>
         <div class="buttons">
-          <button type="button" class="push" id="addCancel">Hủy</button>
-          <button type="submit" class="push primary">Tải xuống</button>
+          <button type="button" class="push" id="addCancel" data-t="cancel"></button>
+          <button type="submit" class="push primary" data-t="download"></button>
         </div>
       </form>
-    </div>
-
-    <div class="modal" id="settingsModal">
-      <div class="panel wide-panel">
-        <div class="panel-head">
-          <h2>Cài đặt</h2>
-          <button class="push primary small" id="settingsDone">Xong</button>
-        </div>
-        <div class="panel-body">
-          <div class="group-title">Tải xuống</div>
-          <div class="group">
-            <div class="item">
-              <div class="label">Số kết nối mỗi tệp<small>Nhiều kết nối tải nhanh hơn, nhưng vài máy chủ giới hạn số kết nối.</small></div>
-              <div class="control"><input type="range" id="conns" min="1" max="32" step="1" /><span class="value" id="connsVal">8</span></div>
-            </div>
-            <div class="item stack">
-              <div class="label">Thư mục lưu</div>
-              <div class="control"><input id="folder" class="field" type="text" spellcheck="false" /><button class="push" id="chooseFolder">Chọn...</button></div>
-            </div>
-            <div class="item">
-              <div class="label">Phân loại theo loại tệp<small>Như IDM: tệp nén vào Compressed, tài liệu vào Documents, nhạc vào Music, chương trình vào Programs, video vào Video, đều trong thư mục lưu. Tệp khác để ngay ở thư mục lưu.</small></div>
-              <div class="control"><label class="switch"><input type="checkbox" id="classify" /><span class="knob"></span></label></div>
-            </div>
-          </div>
-
-          <div class="group-title">Hàng đợi và tốc độ</div>
-          <div class="group">
-            <div class="item">
-              <div class="label">Số tệp tải cùng lúc<small>Các tệp còn lại chờ trong hàng đợi và tự bắt đầu khi có chỗ.</small></div>
-              <div class="control">
-                <select id="maxActive">
-                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
-                  <option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="0">Không giới hạn</option>
-                </select>
-              </div>
-            </div>
-            <div class="item">
-              <div class="label">Giới hạn tốc độ<small>Cho mọi tệp đang tải cộng lại, để mạng còn chỗ cho việc khác.</small></div>
-              <div class="control">
-                <select id="speedLimit">
-                  <option value="0">Không giới hạn</option><option value="262144">256 KB/s</option><option value="524288">512 KB/s</option>
-                  <option value="1048576">1 MB/s</option><option value="2097152">2 MB/s</option><option value="5242880">5 MB/s</option>
-                  <option value="10485760">10 MB/s</option><option value="20971520">20 MB/s</option><option value="52428800">50 MB/s</option>
-                </select>
-              </div>
-            </div>
-            <div class="item">
-              <div class="label">Hẹn giờ bắt đầu<small id="scheduleNote"></small></div>
-              <div class="control">
-                <input id="scheduleTime" class="field" type="time" value="01:00" />
-                <label class="switch"><input type="checkbox" id="scheduleOn" /><span class="knob"></span></label>
-              </div>
-            </div>
-            <div class="item">
-              <div class="label">Khi tải xong hết<small>Lanes chờ một phút trước khi làm, rồi tự trở về Không làm gì.</small></div>
-              <div class="control">
-                <select id="whenDone"><option value="">Không làm gì</option><option value="sleep">Cho máy ngủ</option><option value="shutdown">Tắt máy</option></select>
-              </div>
-            </div>
-          </div>
-
-          <div class="group-title">Mạng</div>
-          <div class="group">
-            <div class="item">
-              <div class="label">net-merge: dùng mọi đường mạng <span class="beta">beta</span><small>Các kết nối của mỗi lượt tải được chia ra Wi-Fi, Ethernet và điện thoại cắm USB bật Điểm truy cập cá nhân cùng lúc, nên một tệp được tải bằng tổng tốc độ của các đường. Không cần quyền quản trị, chỉ lượt tải của Lanes tham gia. Kết nối đầu tiên tới mỗi trang đi đường mạng mặc định, đường khác chỉ nhận trang đó sau khi đã được kiểm tra với nó, và khi VPN chở toàn bộ lưu lượng thì không gộp gì.</small></div>
-              <div class="control"><label class="switch"><input type="checkbox" id="netMerge" /><span class="knob"></span></label></div>
-            </div>
-            <div class="item stack" id="netsItem" hidden><div class="nets" id="nets"></div></div>
-          </div>
-
-          <div class="group-title">Chung</div>
-          <div class="group">
-            <div class="item">
-              <div class="label">Mở cùng máy tính<small>Lanes chạy ẩn trong thanh trạng thái để tải theo hàng đợi.</small></div>
-              <div class="control"><label class="switch"><input type="checkbox" id="autostart" /><span class="knob"></span></label></div>
-            </div>
-            <div class="item">
-              <div class="label">Theo dõi clipboard<small>Chép một liên kết tới tệp (zip, exe, dmg, mp4, pdf...) ở bất kỳ đâu là Lanes mở bảng thêm liên kết với nó.</small></div>
-              <div class="control"><label class="switch"><input type="checkbox" id="watchClipboard" /><span class="knob"></span></label></div>
-            </div>
-            <div class="item stack">
-              <div class="label">Tiện ích trình duyệt<small>Chrome, Edge, Brave, Cốc Cốc: mở trang Tiện ích, bật Chế độ nhà phát triển rồi kéo thư mục này vào trang đó (hoặc bấm "Tải tiện ích đã giải nén" và chọn nó). Tiện ích chuyển mọi download sang Lanes và thêm nút "Tải video" trên các video. Lanes tự cập nhật thư mục này cùng app.</small></div>
-              <div class="control"><input id="extPath" class="field" type="text" readonly spellcheck="false" /><button class="push" id="extOpen">Mở thư mục</button></div>
-            </div>
-          </div>
-
-          <div class="group-title">Giới thiệu</div>
-          <div class="group">
-            <div class="item">
-              <div class="label">Lanes <span id="version">-</span></div>
-              <div class="control"><button class="push" id="checkUpdate">Kiểm tra cập nhật</button></div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <div class="ctx" id="ctx" role="menu"></div>
 
     <div class="banner" id="banner">
       <div id="bannerTxt"></div>
-      <button class="push primary" id="bannerBtn">Cập nhật</button>
+      <button class="push primary" id="bannerBtn" data-t="update"></button>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -480,8 +584,9 @@
     <script>
       "use strict";
       const $ = (id) => document.getElementById(id);
+      const root = document.documentElement;
       const mac = /Mac OS X/.test(navigator.userAgent);
-      document.documentElement.classList.toggle("mac", mac);
+      root.classList.toggle("mac", mac);
       const pending = new Map();
       let seq = 1;
 
@@ -505,6 +610,106 @@
         },
       };
 
+      // The page's words in both languages; {0} and {1} are what goes in them.
+      const WORDS = {
+        vi: {
+          settings: "Cài đặt", secDownloads: "Tải xuống", all: "Tất cả", active: "Đang tải", done: "Đã xong", stopped: "Tạm dừng và lỗi",
+          secKinds: "Loại tệp", Video: "Video", Music: "Nhạc", Documents: "Tài liệu", Compressed: "Tệp nén", Programs: "Chương trình", other: "Khác",
+          pauseAll: "Tạm dừng tất cả", resumeAll: "Tiếp tục tất cả", addTip: "Thêm liên kết (Cmd+N)", search: "Tìm kiếm", settingsTip: "Cài đặt (Cmd+,)",
+          downloads: "Danh sách tải", running: "{0} đang tải", items: "{0} mục", item: "{0} mục", starts: "hẹn {0}", atMost: "tối đa {0}/s", tomorrow: "{0} ngày mai",
+          left: "còn {0}", conns: "Số kết nối mỗi tệp", nConns: "{0} kết nối", nLinks: "{0} đường mạng", nSources: "{0} nguồn",
+          seconds: "{0} giây", minutes: "{0} phút", hours: "{0} giờ",
+          queued: "Đang chờ", waitsUntil: "Chờ tới {0}", paused: "Tạm dừng", failed: "Tải thất bại",
+          pause: "Tạm dừng", resume: "Tiếp tục", reveal: mac ? "Hiện trong Finder" : "Mở thư mục chứa", remove: "Xóa khỏi danh sách", open: "Mở",
+          copy: "Sao chép liên kết", copied: "Đã sao chép liên kết", copyFailed: "Không sao chép được liên kết",
+          emptyNone: "Chưa có gì tải", emptyNoneText: "Dán một liên kết, hoặc tải từ trình duyệt qua tiện ích Lanes.",
+          emptyView: "Không có mục nào", emptyViewText: "Mục này đang trống.", noResults: "Không có kết quả", noResultsText: 'Không có tệp nào khớp "{0}".',
+          addLink: "Thêm liên kết", addLead: "Lanes tải tệp qua nhiều kết nối cùng lúc và tiếp tục được khi dừng.", one: "Một nguồn", many: "Nhiều nguồn",
+          batchHint: "Tải cả loạt tệp đánh số: ghi khoảng trong ngoặc vuông, như https://site.vn/anh[001-120].jpg hoặc tap[a-f].zip.",
+          mirrors: "Mỗi dòng một liên kết mirror của cùng một file:\nhttps://mirror-1.example/file.iso\nhttps://mirror-2.example/file.iso",
+          mirrorsHint: "net-merge: Lanes chia các đoạn cho từng nguồn và gộp băng thông, bỏ nguồn nào khác kích thước.",
+          cancel: "Hủy", download: "Tải xuống",
+          tabGeneral: "Chung", tabLook: "Giao diện", tabDownloads: "Tải xuống", tabQueue: "Hàng đợi", tabNetwork: "Mạng",
+          autostart: "Mở cùng máy tính", autostartHint: "Lanes chạy ẩn trong thanh trạng thái để tải theo hàng đợi.",
+          clipboard: "Theo dõi clipboard", clipboardHint: "Chép một liên kết tới tệp (zip, exe, dmg, mp4, pdf...) ở bất kỳ đâu là Lanes mở bảng thêm liên kết với nó.",
+          extension: "Tiện ích trình duyệt",
+          extensionHint: 'Chrome, Edge, Brave, Cốc Cốc: mở trang Tiện ích, bật Chế độ nhà phát triển rồi kéo thư mục này vào trang đó (hoặc bấm "Tải tiện ích đã giải nén" và chọn nó). Tiện ích chuyển mọi download sang Lanes và thêm nút "Tải video" trên các video. Lanes tự cập nhật thư mục này cùng app.',
+          openFolder: "Mở thư mục", about: "Giới thiệu", checkUpdate: "Kiểm tra cập nhật", checking: "Đang kiểm tra bản mới...",
+          language: "Ngôn ngữ", languageHint: "Ngôn ngữ của cửa sổ, menu và thông báo.",
+          theme: "Giao diện", themeHint: "Theo hệ thống, hoặc luôn sáng, luôn tối.", system: "Hệ thống", light: "Sáng", dark: "Tối",
+          glassHint: "Sidebar, thanh công cụ và các bảng thành kính mờ trên nền màu, như macOS 26.",
+          connsHint: "Nhiều kết nối tải nhanh hơn, nhưng vài máy chủ giới hạn số kết nối.", folder: "Thư mục lưu", choose: "Chọn...",
+          classify: "Phân loại theo loại tệp",
+          classifyHint: "Như IDM: tệp nén vào Compressed, tài liệu vào Documents, nhạc vào Music, chương trình vào Programs, video vào Video, đều trong thư mục lưu. Tệp khác để ngay ở thư mục lưu.",
+          maxActive: "Số tệp tải cùng lúc", maxActiveHint: "Các tệp còn lại chờ trong hàng đợi và tự bắt đầu khi có chỗ.", unlimited: "Không giới hạn",
+          speed: "Giới hạn tốc độ", speedHint: "Cho mọi tệp đang tải cộng lại, để mạng còn chỗ cho việc khác.",
+          schedule: "Hẹn giờ bắt đầu", scheduleOff: "Hàng đợi chờ tới giờ này mới bắt đầu, một lần, như khi muốn tải vào ban đêm.",
+          scheduleOn: "Hàng đợi bắt đầu lúc {0}. Tệp thêm từ giờ tới lúc đó sẽ chờ.",
+          whenDone: "Khi tải xong hết", whenDoneHint: "Lanes chờ một phút trước khi làm, rồi tự trở về Không làm gì.", nothing: "Không làm gì", sleep: "Cho máy ngủ", shutdown: "Tắt máy",
+          netMerge: "net-merge: dùng mọi đường mạng",
+          netMergeHint: "Các kết nối của mỗi lượt tải được chia ra Wi-Fi, Ethernet và điện thoại cắm USB bật Điểm truy cập cá nhân cùng lúc, nên một tệp được tải bằng tổng tốc độ của các đường. Không cần quyền quản trị, chỉ lượt tải của Lanes tham gia. Kết nối đầu tiên tới mỗi trang đi đường mạng mặc định, đường khác chỉ nhận trang đó sau khi đã được kiểm tra với nó, và khi VPN chở toàn bộ lưu lượng thì không gộp gì.",
+          netIdle: "Sẵn sàng", netChecking: "Đang kiểm tra...", netUp: "Đang chạy", netDown: "Không có internet", netDefault: "mặc định", netCarries: "{0} kết nối · {1}/s",
+          netVpn: "VPN đang chở toàn bộ lưu lượng nên không gộp: lượt tải đi qua VPN như trước.", netNone: "Không tìm thấy đường mạng nào.",
+          netOne: "Mới có một đường mạng. Cắm điện thoại qua USB và bật Điểm truy cập cá nhân, hoặc cắm cáp Ethernet, để thêm một đường.",
+          updateOut: "Có bản Lanes {0}. Bạn đang dùng {1}.", update: "Cập nhật", updating: "Đang tải...", updatingPct: "Đang tải {0}%",
+          updateReady: "Đã tải xong bản mới. Khởi động lại để dùng.", restart: "Khởi động lại",
+        },
+        en: {
+          settings: "Settings", secDownloads: "Downloads", all: "All", active: "Downloading", done: "Finished", stopped: "Paused and failed",
+          secKinds: "Kinds", Video: "Video", Music: "Music", Documents: "Documents", Compressed: "Archives", Programs: "Programs", other: "Other",
+          pauseAll: "Pause all", resumeAll: "Resume all", addTip: "Add a link (Cmd+N)", search: "Search", settingsTip: "Settings (Cmd+,)",
+          downloads: "Downloads", running: "{0} downloading", items: "{0} items", item: "{0} item", starts: "starts {0}", atMost: "at most {0}/s", tomorrow: "{0} tomorrow",
+          left: "{0} left", conns: "Connections per file", nConns: "{0} connections", nLinks: "{0} network links", nSources: "{0} sources",
+          seconds: "{0} s", minutes: "{0} min", hours: "{0} h",
+          queued: "Waiting", waitsUntil: "Waits until {0}", paused: "Paused", failed: "Failed",
+          pause: "Pause", resume: "Resume", reveal: mac ? "Show in Finder" : "Show in Folder", remove: "Remove from List", open: "Open",
+          copy: "Copy Link", copied: "Link copied", copyFailed: "Could not copy the link",
+          emptyNone: "Nothing downloaded yet", emptyNoneText: "Paste a link, or download from the browser through the Lanes extension.",
+          emptyView: "Nothing here", emptyViewText: "This list is empty.", noResults: "No results", noResultsText: 'No file matches "{0}".',
+          addLink: "Add a Link", addLead: "Lanes downloads a file over many connections at once and picks up where it stopped.", one: "One source", many: "Several sources",
+          batchHint: "A numbered series: put the range in square brackets, as in https://site.example/img[001-120].jpg or part[a-f].zip.",
+          mirrors: "One mirror of the same file on each line:\nhttps://mirror-1.example/file.iso\nhttps://mirror-2.example/file.iso",
+          mirrorsHint: "net-merge: Lanes shares the pieces out over the sources and adds up their speed, leaving out any of another size.",
+          cancel: "Cancel", download: "Download",
+          tabGeneral: "General", tabLook: "Appearance", tabDownloads: "Downloads", tabQueue: "Queue", tabNetwork: "Network",
+          autostart: "Open at login", autostartHint: "Lanes stays in the menu bar to download what is queued.",
+          clipboard: "Watch the clipboard", clipboardHint: "Copy a link to a file (zip, exe, dmg, mp4, pdf...) anywhere and Lanes opens the add sheet with it.",
+          extension: "Browser extension",
+          extensionHint: 'Chrome, Edge, Brave, Coc Coc: open the Extensions page, turn on Developer mode and drag this folder onto it (or click "Load unpacked" and pick it). The extension hands every download to Lanes and puts a "Download video" button on videos. Lanes keeps this folder up to date with the app.',
+          openFolder: "Open Folder", about: "About", checkUpdate: "Check for Updates", checking: "Checking for a new version...",
+          language: "Language", languageHint: "The language of the window, the menus and the notifications.",
+          theme: "Appearance", themeHint: "As the system, or always light or dark.", system: "System", light: "Light", dark: "Dark",
+          glassHint: "The sidebar, the toolbar and the sheets turn to frosted glass over a coloured backdrop, as in macOS 26.",
+          connsHint: "More connections download faster, but some servers limit them.", folder: "Download folder", choose: "Choose...",
+          classify: "Sort by kind",
+          classifyHint: "As IDM does: archives go into Compressed, documents into Documents, music into Music, programs into Programs and videos into Video, all in the download folder. Other files stay in the folder itself.",
+          maxActive: "Downloads at once", maxActiveHint: "The others wait in the queue and start as room opens up.", unlimited: "No limit",
+          speed: "Speed limit", speedHint: "Over every download together, so the network has room for the rest.",
+          schedule: "Start at a set time", scheduleOff: "The queue waits for this time to start, once, as for a download at night.",
+          scheduleOn: "The queue starts at {0}. Files added until then wait.",
+          whenDone: "When everything is done", whenDoneHint: "Lanes waits a minute first, then goes back to Do nothing.", nothing: "Do nothing", sleep: "Sleep", shutdown: "Shut down",
+          netMerge: "net-merge: use every network link",
+          netMergeHint: "The connections of each download are spread over Wi-Fi, Ethernet and a phone sharing its connection over USB at once, so a file comes at the speed of them all together. No administrator rights are needed, and only Lanes' downloads take part. The first connection to each site takes the default link, another link takes a site only once it has been checked against it, and nothing is merged while a VPN carries all traffic.",
+          netIdle: "Ready", netChecking: "Checking...", netUp: "Running", netDown: "No internet", netDefault: "default", netCarries: "{0} connections · {1}/s",
+          netVpn: "A VPN carries all traffic, so nothing is merged: downloads go through the VPN as before.", netNone: "No network link was found.",
+          netOne: "There is one network link so far. Plug in a phone over USB with Personal Hotspot on, or an Ethernet cable, to add another.",
+          updateOut: "Lanes {0} is out. You have {1}.", update: "Update", updating: "Downloading...", updatingPct: "Downloading {0}%",
+          updateReady: "The new version is ready. Restart to use it.", restart: "Restart",
+        },
+      };
+      let lang = root.lang === "en" ? "en" : "vi";
+      const t = (key, ...args) => (WORDS[lang][key] ?? WORDS.vi[key] ?? key).replace(/\{(\d)\}/g, (_, i) => args[i]);
+
+      // The static words of the page: data-t is an element's text, data-tp a placeholder, data-tt a button's title and
+      // label, data-tl a label for assistive technology.
+      function applyLang() {
+        root.lang = lang;
+        for (const el of document.querySelectorAll("[data-t]")) el.textContent = t(el.dataset.t);
+        for (const el of document.querySelectorAll("[data-tp]")) el.placeholder = t(el.dataset.tp);
+        for (const el of document.querySelectorAll("[data-tt]")) { el.title = t(el.dataset.tt); el.setAttribute("aria-label", t(el.dataset.tt)); }
+        for (const el of document.querySelectorAll("[data-tl]")) el.setAttribute("aria-label", t(el.dataset.tl));
+      }
+
       // Download states, matching engine::state.
       const QUEUED = 0, RUNNING = 1, PAUSED = 2, DONE = 3, ERROR = 4;
 
@@ -517,9 +722,9 @@
       }
       function eta(sec) {
         if (!isFinite(sec) || sec <= 0) return "";
-        if (sec < 60) return Math.round(sec) + " giây";
-        if (sec < 3600) return Math.round(sec / 60) + " phút";
-        return (sec / 3600).toFixed(1) + " giờ";
+        if (sec < 60) return t("seconds", Math.round(sec));
+        if (sec < 3600) return t("minutes", Math.round(sec / 60));
+        return t("hours", (sec / 3600).toFixed(1));
       }
       function esc(s) {
         return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -545,46 +750,71 @@
         reveal: '<circle cx="10.5" cy="10.5" r="5.5" stroke="currentColor" stroke-width="2"/>' + line("M14.8 14.8l4.2 4.2", 2.2),
         remove: line("M7.5 7.5l9 9M16.5 7.5l-9 9", 2),
       };
-      const act = (name, title, cls = "") => `<button class="act ${cls}" data-act="${name}" title="${title}" aria-label="${title}">${svg(ACT[name])}</button>`;
+      const act = (name, cls = "") => `<button class="act ${cls}" data-act="${name}" title="${t(name)}" aria-label="${t(name)}">${svg(ACT[name])}</button>`;
 
       // The sidebar: the downloads by state, then by type of file.
       const NAV = [
-        { section: "Tải xuống" },
-        { id: "all", label: "Tất cả", icon: line("M4 13.5l2.2-7.1A2 2 0 018.1 5h7.8a2 2 0 011.9 1.4l2.2 7.1V18a2 2 0 01-2 2H6a2 2 0 01-2-2v-4.5zM4 13.5h4.5l1 2h5l1-2H20"), test: () => true },
-        { id: "active", label: "Đang tải", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M12 7.5v8m0 0l-3.2-3.2M12 15.5l3.2-3.2"), test: (it) => it.state === RUNNING || it.state === QUEUED },
-        { id: "done", label: "Đã xong", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M8.3 12.3l2.6 2.6 5-5.2"), test: (it) => it.state === DONE },
-        { id: "stopped", label: "Tạm dừng và lỗi", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M10 9v6M14 9v6"), test: (it) => it.state === PAUSED || it.state === ERROR },
-        { section: "Loại tệp" },
-        { id: "Video", label: "Video", icon: line("M4 6.5h16v11H4z") + line("M10.5 9.8v4.4l3.8-2.2z"), test: (it) => it.category === "Video" },
-        { id: "Music", label: "Nhạc", icon: line("M10 17.5V7l8-2v10.5") + '<circle cx="7.8" cy="17.5" r="2.3" stroke="currentColor" stroke-width="1.8"/><circle cx="15.8" cy="15.5" r="2.3" stroke="currentColor" stroke-width="1.8"/>', test: (it) => it.category === "Music" },
-        { id: "Documents", label: "Tài liệu", icon: GLYPH.Documents, test: (it) => it.category === "Documents" },
-        { id: "Compressed", label: "Tệp nén", icon: GLYPH.Compressed, test: (it) => it.category === "Compressed" },
-        { id: "Programs", label: "Chương trình", icon: GLYPH.Programs, test: (it) => it.category === "Programs" },
-        { id: "other", label: "Khác", icon: GLYPH.other, test: (it) => !it.category },
+        { section: "secDownloads" },
+        { id: "all", icon: line("M4 13.5l2.2-7.1A2 2 0 018.1 5h7.8a2 2 0 011.9 1.4l2.2 7.1V18a2 2 0 01-2 2H6a2 2 0 01-2-2v-4.5zM4 13.5h4.5l1 2h5l1-2H20"), test: () => true },
+        { id: "active", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M12 7.5v8m0 0l-3.2-3.2M12 15.5l3.2-3.2"), test: (it) => it.state === RUNNING || it.state === QUEUED },
+        { id: "done", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M8.3 12.3l2.6 2.6 5-5.2"), test: (it) => it.state === DONE },
+        { id: "stopped", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M10 9v6M14 9v6"), test: (it) => it.state === PAUSED || it.state === ERROR },
+        { section: "secKinds" },
+        { id: "Video", icon: line("M4 6.5h16v11H4z") + line("M10.5 9.8v4.4l3.8-2.2z"), test: (it) => it.category === "Video" },
+        { id: "Music", icon: line("M10 17.5V7l8-2v10.5") + '<circle cx="7.8" cy="17.5" r="2.3" stroke="currentColor" stroke-width="1.8"/><circle cx="15.8" cy="15.5" r="2.3" stroke="currentColor" stroke-width="1.8"/>', test: (it) => it.category === "Music" },
+        { id: "Documents", icon: GLYPH.Documents, test: (it) => it.category === "Documents" },
+        { id: "Compressed", icon: GLYPH.Compressed, test: (it) => it.category === "Compressed" },
+        { id: "Programs", icon: GLYPH.Programs, test: (it) => it.category === "Programs" },
+        { id: "other", icon: GLYPH.other, test: (it) => !it.category },
       ];
       const views = NAV.filter((n) => n.id);
       $("nav").innerHTML = NAV.map((n) =>
         n.section
-          ? `<div class="section">${n.section}</div>`
-          : `<button class="nav-item" data-view="${n.id}">${svg(n.icon)}<span>${n.label}</span><span class="count"></span></button>`
+          ? `<div class="section" data-t="${n.section}"></div>`
+          : `<button class="nav-item" data-view="${n.id}">${svg(n.icon)}<span data-t="${n.id}"></span><span class="count"></span></button>`
       ).join("");
+
+      // Settings, one tab at a time.
+      const TABS = [
+        { id: "general", icon: line("M4 7h16M4 12h16M4 17h10") },
+        { id: "look", icon: '<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.8"/><path d="M12 4a8 8 0 010 16z" fill="currentColor"/>' },
+        { id: "downloads", icon: line("M12 4.5v10m0 0l-4-4m4 4l4-4M5.5 19h13") },
+        { id: "queue", icon: line("M5 7h14M5 12h14M5 17h9") + line("M17.5 15.5v4M15.5 17.5h4") },
+        { id: "network", icon: line("M4.5 9.5a11 11 0 0115 0M7.5 12.8a6.8 6.8 0 019 0M10.5 16a2.5 2.5 0 013 0") },
+      ];
+      const tabKey = (id) => "tab" + id[0].toUpperCase() + id.slice(1);
+      $("tabs").innerHTML = TABS.map((tab) => `<button class="tb tab" role="tab" data-tab="${tab.id}">${svg(tab.icon)}<span data-t="${tabKey(tab.id)}"></span></button>`).join("");
 
       let items = [];
       // The queue's start time (seconds since 1970, 0 for none) and the speed limit, as the app keeps them.
       let startAt = 0;
       let speedLimit = 0;
+      let lastNet = null;
       const waiting = () => startAt * 1000 > Date.now();
       const two = (n) => String(n).padStart(2, "0");
       const clock = (sec) => { const d = new Date(sec * 1000); return `${two(d.getHours())}:${two(d.getMinutes())}`; };
-      const when = (sec) => clock(sec) + (new Date(sec * 1000).toDateString() === new Date().toDateString() ? "" : " ngày mai");
+      const when = (sec) => (new Date(sec * 1000).toDateString() === new Date().toDateString() ? clock(sec) : t("tomorrow", clock(sec)));
       let view = "all";
+      let lastList = "all";
+      let tab = "general";
       let query = "";
       let selected = null;
 
+      function go(next) {
+        if (next !== "settings") lastList = next;
+        view = next;
+        closeMenu();
+        draw();
+      }
       $("nav").addEventListener("click", (e) => {
         const item = e.target.closest("[data-view]");
-        if (!item) return;
-        view = item.dataset.view;
+        if (item) go(item.dataset.view);
+      });
+      document.querySelector(".side-foot").addEventListener("click", () => go("settings"));
+      $("tabs").addEventListener("click", (e) => {
+        const button = e.target.closest("[data-tab]");
+        if (!button) return;
+        tab = button.dataset.tab;
         draw();
       });
       $("search").addEventListener("input", () => {
@@ -595,13 +825,16 @@
       function subline(it) {
         if (it.state === RUNNING) {
           const left = it.size && it.speed ? eta((it.size - it.downloaded) / it.speed) : "";
-          const nets = it.links > 1 ? ` · ${it.links} đường mạng` : "";
-          const src = it.sources > 1 ? ` · ${it.sources} nguồn` : "";
-          return `${human(it.downloaded)} / ${human(it.size)} · ${human(it.speed)}/s${left ? " · còn " + left : ""} · ${it.connections} kết nối${nets}${src}`;
+          const parts = [`${human(it.downloaded)} / ${human(it.size)}`, `${human(it.speed)}/s`];
+          if (left) parts.push(t("left", left));
+          parts.push(t("nConns", it.connections));
+          if (it.links > 1) parts.push(t("nLinks", it.links));
+          if (it.sources > 1) parts.push(t("nSources", it.sources));
+          return parts.join(" · ");
         }
-        if (it.state === QUEUED) return waiting() ? `Chờ tới ${when(startAt)}` : "Đang chờ";
-        if (it.state === PAUSED) return `Tạm dừng · ${human(it.downloaded)} / ${human(it.size)}`;
-        if (it.state === ERROR) return it.error || "Tải thất bại";
+        if (it.state === QUEUED) return waiting() ? t("waitsUntil", when(startAt)) : t("queued");
+        if (it.state === PAUSED) return `${t("paused")} · ${human(it.downloaded)} / ${human(it.size)}`;
+        if (it.state === ERROR) return it.error || t("failed");
         return [human(it.size), host(it.url)].filter(Boolean).join(" · ");
       }
 
@@ -609,10 +842,10 @@
         const pct = it.size ? Math.min(100, (it.downloaded / it.size) * 100) : 0;
         const fill = it.state === PAUSED ? "paused" : it.state === ERROR ? "error" : "";
         const actions =
-          (it.state === RUNNING || it.state === QUEUED ? act("pause", "Tạm dừng") : "") +
-          (it.state === PAUSED || it.state === ERROR ? act("resume", "Tiếp tục") : "") +
-          (it.state === DONE ? act("reveal", mac ? "Hiện trong Finder" : "Mở thư mục chứa") : "") +
-          act("remove", "Xóa khỏi danh sách", "rm");
+          (it.state === RUNNING || it.state === QUEUED ? act("pause") : "") +
+          (it.state === PAUSED || it.state === ERROR ? act("resume") : "") +
+          (it.state === DONE ? act("reveal") : "") +
+          act("remove", "rm");
         return `
           <div class="icon ${it.category || "other"}">${svg(GLYPH[it.category] || GLYPH.other)}</div>
           <div class="meta">
@@ -624,22 +857,31 @@
       }
 
       function draw() {
-        const current = views.find((v) => v.id === view) || views[0];
+        const inSettings = view === "settings";
+        $("main").classList.toggle("settings", inSettings);
+        document.querySelector(".side-foot .nav-item").classList.toggle("on", inSettings);
         for (const v of views) {
           const el = document.querySelector(`[data-view="${v.id}"]`);
-          el.classList.toggle("on", v.id === current.id);
-          const n = items.filter(v.test).length;
-          el.querySelector(".count").textContent = n || "";
+          el.classList.toggle("on", v.id === view);
+          el.querySelector(".count").textContent = items.filter(v.test).length || "";
         }
+        if (inSettings) {
+          $("title").textContent = t("settings");
+          $("subtitle").textContent = t(tabKey(tab));
+          for (const b of $("tabs").children) b.classList.toggle("on", b.dataset.tab === tab);
+          for (const page of document.querySelectorAll(".tab-page")) page.classList.toggle("on", page.dataset.tab === tab);
+          return;
+        }
+        const current = views.find((v) => v.id === view) || views[0];
         const shown = items.filter((it) => current.test(it) && (!query || it.filename.toLowerCase().includes(query) || it.url.toLowerCase().includes(query)));
         if (!shown.some((it) => it.id === selected)) selected = null;
 
         const running = items.filter((it) => it.state === RUNNING);
         const speed = running.reduce((n, it) => n + (it.speed || 0), 0);
-        $("title").textContent = current.label;
-        const status = [running.length ? `${running.length} đang tải · ${human(speed)}/s` : `${shown.length} mục`];
-        if (waiting()) status.push(`hẹn ${when(startAt)}`);
-        if (speedLimit) status.push(`tối đa ${human(speedLimit)}/s`);
+        $("title").textContent = t(current.id);
+        const status = [running.length ? `${t("running", running.length)} · ${human(speed)}/s` : t(shown.length === 1 ? "item" : "items", shown.length)];
+        if (waiting()) status.push(t("starts", when(startAt)));
+        if (speedLimit) status.push(t("atMost", human(speedLimit)));
         $("subtitle").textContent = status.join(" · ");
         $("pauseAll").disabled = !items.some((it) => it.state === RUNNING || it.state === QUEUED);
         $("resumeAll").disabled = !items.some((it) => it.state === PAUSED);
@@ -666,10 +908,9 @@
         });
         for (const row of keep.values()) row.remove();
 
-        const empty = !shown.length;
-        $("empty").style.display = empty ? "flex" : "none";
-        $("emptyTitle").textContent = query ? "Không có kết quả" : items.length ? "Không có mục nào" : "Chưa có gì tải";
-        $("emptyText").textContent = query ? `Không có tệp nào khớp "${$("search").value.trim()}".` : items.length ? "Mục này đang trống." : "Dán một liên kết, hoặc tải từ trình duyệt qua tiện ích Lanes.";
+        $("empty").style.display = shown.length ? "none" : "flex";
+        $("emptyTitle").textContent = t(query ? "noResults" : items.length ? "emptyView" : "emptyNone");
+        $("emptyText").textContent = query ? t("noResultsText", $("search").value.trim()) : t(items.length ? "emptyViewText" : "emptyNoneText");
         $("emptyAdd").hidden = !!(query || items.length);
       }
 
@@ -706,12 +947,12 @@
       const ctx = $("ctx");
       function menuFor(it) {
         const entries = [];
-        if (it.state === DONE) entries.push(["open", "Mở"]);
-        entries.push(["reveal", mac ? "Hiện trong Finder" : "Mở thư mục chứa"]);
-        if (it.state === RUNNING || it.state === QUEUED) entries.push(["pause", "Tạm dừng"]);
-        if (it.state === PAUSED || it.state === ERROR) entries.push(["resume", "Tiếp tục"]);
-        entries.push(["copy", "Sao chép liên kết"], null, ["remove", "Xóa khỏi danh sách"]);
-        return entries.map((e) => (e ? `<button role="menuitem" data-act="${e[0]}">${e[1]}</button>` : "<hr />")).join("");
+        if (it.state === DONE) entries.push("open");
+        entries.push("reveal");
+        if (it.state === RUNNING || it.state === QUEUED) entries.push("pause");
+        if (it.state === PAUSED || it.state === ERROR) entries.push("resume");
+        entries.push("copy", null, "remove");
+        return entries.map((e) => (e ? `<button role="menuitem" data-act="${e}">${t(e)}</button>` : "<hr />")).join("");
       }
       document.addEventListener("contextmenu", (e) => {
         if (e.target.closest("input, textarea")) return;
@@ -743,9 +984,9 @@
       });
       window.addEventListener("blur", () => {
         closeMenu();
-        document.documentElement.classList.add("inactive");
+        root.classList.add("inactive");
       });
-      window.addEventListener("focus", () => document.documentElement.classList.remove("inactive"));
+      window.addEventListener("focus", () => root.classList.remove("inactive"));
       $("scroll").addEventListener("scroll", closeMenu, { passive: true });
 
       function copy(text) {
@@ -755,7 +996,7 @@
         area.select();
         const ok = document.execCommand("copy");
         area.remove();
-        toast(ok ? "Đã sao chép liên kết" : "Không sao chép được liên kết");
+        toast(t(ok ? "copied" : "copyFailed"));
       }
 
       // The window is dragged by its toolbar and the top of the sidebar, and zoomed by a double click there, as the
@@ -769,7 +1010,7 @@
       let mode = "one";
       function setMode(next) {
         mode = next;
-        for (const seg of document.querySelectorAll(".seg")) seg.classList.toggle("on", seg.dataset.mode === mode);
+        for (const seg of document.querySelectorAll(".seg[data-mode]")) seg.classList.toggle("on", seg.dataset.mode === mode);
         $("oneBox").hidden = mode !== "one";
         $("manyBox").hidden = mode !== "many";
         (mode === "one" ? $("url") : $("mergeUrls")).focus();
@@ -781,7 +1022,7 @@
         if (url) $("url").value = url;
         if (mode === "one") $("url").select();
       }
-      for (const seg of document.querySelectorAll(".seg")) seg.addEventListener("click", () => setMode(seg.dataset.mode));
+      for (const seg of document.querySelectorAll(".seg[data-mode]")) seg.addEventListener("click", () => setMode(seg.dataset.mode));
       $("addOpen").addEventListener("click", () => openAdd());
       $("emptyAdd").addEventListener("click", () => openAdd());
       $("addCancel").addEventListener("click", closeAll);
@@ -801,17 +1042,12 @@
         closeAll();
       });
 
-      function openSettings() {
-        closeAll();
-        $("settingsModal").classList.add("open");
-      }
       function closeAll() {
         closeMenu();
         for (const m of document.querySelectorAll(".modal")) m.classList.remove("open");
       }
       const anyOpen = () => !!document.querySelector(".modal.open");
-      $("gear").addEventListener("click", openSettings);
-      $("settingsDone").addEventListener("click", closeAll);
+      $("gear").addEventListener("click", () => go("settings"));
       for (const m of document.querySelectorAll(".modal")) m.addEventListener("mousedown", (e) => e.target === m && closeAll());
       $("pauseAll").addEventListener("click", () => call("pause_all"));
       $("resumeAll").addEventListener("click", () => call("resume_all"));
@@ -821,14 +1057,15 @@
         const cmd = e.metaKey || e.ctrlKey;
         if (e.key === "Escape") {
           if (anyOpen() || ctx.classList.contains("open")) closeAll();
+          else if (view === "settings") go(lastList);
           else if (document.activeElement === $("search")) { $("search").value = ""; query = ""; $("search").blur(); draw(); }
           else select(null);
           return;
         }
         if (cmd && e.key.toLowerCase() === "n") { e.preventDefault(); openAdd(); return; }
-        if (cmd && e.key.toLowerCase() === "f") { e.preventDefault(); $("search").focus(); return; }
-        if (cmd && e.key === ",") { e.preventDefault(); openSettings(); return; }
-        if (anyOpen() || e.target.closest("input, textarea")) return;
+        if (cmd && e.key.toLowerCase() === "f") { e.preventDefault(); if (view === "settings") go(lastList); $("search").focus(); return; }
+        if (cmd && e.key === ",") { e.preventDefault(); go("settings"); return; }
+        if (anyOpen() || view === "settings" || e.target.closest("input, textarea, select")) return;
         const rows = [...$("list").children].map((row) => Number(row.dataset.id));
         const at = rows.indexOf(selected);
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -851,7 +1088,33 @@
         if (/^https?:\/\//i.test(text)) openAdd(text);
       });
 
-      // Settings.
+      // Settings: appearance.
+      $("language").addEventListener("change", () =>
+        call("set_language", { language: $("language").value }).then((l) => {
+          lang = l;
+          $("language").value = l;
+          applyLang();
+          renderNet(lastNet);
+          showSchedule(startAt);
+        }).catch(() => {})
+      );
+      function showTheme(theme) {
+        root.dataset.theme = theme;
+        paintTheme();
+        for (const seg of $("theme").children) seg.classList.toggle("on", seg.dataset.theme === theme);
+      }
+      $("theme").addEventListener("click", (e) => {
+        const seg = e.target.closest("[data-theme]");
+        if (seg) call("set_theme", { theme: seg.dataset.theme }).then(showTheme).catch(() => {});
+      });
+      function showGlass(on) {
+        root.toggleAttribute("data-glass", on);
+        paintTheme();
+        $("glass").checked = on;
+      }
+      $("glass").addEventListener("change", () => call("set_glass", { on: $("glass").checked }).then(showGlass).catch(() => {}));
+
+      // Settings: downloads, queue, network.
       const conns = $("conns");
       const paintRange = () => conns.style.setProperty("--p", `${((conns.value - conns.min) / (conns.max - conns.min)) * 100}%`);
       conns.addEventListener("input", () => { $("connsVal").textContent = conns.value; paintRange(); });
@@ -869,24 +1132,19 @@
       );
 
       // net-merge: each link with what it carries, or its state while it carries nothing.
-      const NET_STATE = { idle: "Sẵn sàng", checking: "Đang kiểm tra...", up: "Đang chạy", down: "Không có internet" };
+      const NET_STATE = { idle: "netIdle", checking: "netChecking", up: "netUp", down: "netDown" };
       function renderNet(net) {
+        lastNet = net;
         const box = $("nets");
         $("netsItem").hidden = !net || !$("netMerge").checked;
         if ($("netsItem").hidden) { box.replaceChildren(); return; }
         const rows = net.links.map((l) => {
           const name = l.label === l.name ? l.label : `${l.label} (${l.name})`;
-          const state = l.connections ? `${l.connections} kết nối · ${human(l.speed)}/s` : NET_STATE[l.state] || l.state;
-          return `<div class="net"><span class="net-name">${esc(name)}${l.primary ? '<span class="tag">mặc định</span>' : ""}</span><span class="net-state ${esc(l.state)}">${esc(state)}</span></div>`;
+          const state = l.connections ? t("netCarries", l.connections, human(l.speed)) : NET_STATE[l.state] ? t(NET_STATE[l.state]) : l.state;
+          return `<div class="net"><span class="net-name">${esc(name)}${l.primary ? `<span class="tag">${t("netDefault")}</span>` : ""}</span><span class="net-state ${esc(l.state)}">${esc(state)}</span></div>`;
         });
-        const note = net.paused
-          ? "VPN đang chở toàn bộ lưu lượng nên không gộp: lượt tải đi qua VPN như trước."
-          : !net.links.length
-            ? "Không tìm thấy đường mạng nào."
-            : net.links.length === 1
-              ? "Mới có một đường mạng. Cắm điện thoại qua USB và bật Điểm truy cập cá nhân, hoặc cắm cáp Ethernet, để thêm một đường."
-              : "";
-        box.innerHTML = rows.join("") + (note ? `<p class="hint">${esc(note)}</p>` : "");
+        const note = net.paused ? "netVpn" : !net.links.length ? "netNone" : net.links.length === 1 ? "netOne" : "";
+        box.innerHTML = rows.join("") + (note ? `<p class="hint">${esc(t(note))}</p>` : "");
       }
 
       $("maxActive").addEventListener("change", () => call("set_max_active", { n: Number($("maxActive").value) }));
@@ -915,9 +1173,7 @@
       function showSchedule(at) {
         startAt = at || 0;
         $("scheduleOn").checked = startAt > 0;
-        $("scheduleNote").textContent = startAt
-          ? `Hàng đợi bắt đầu lúc ${when(startAt)}. Tệp thêm từ giờ tới lúc đó sẽ chờ.`
-          : "Hàng đợi chờ tới giờ này mới bắt đầu, một lần, như khi muốn tải vào ban đêm.";
+        $("scheduleNote").textContent = startAt ? t("scheduleOn", when(startAt)) : t("scheduleOff");
         draw();
       }
       $("scheduleOn").addEventListener("change", setSchedule);
@@ -926,12 +1182,12 @@
       $("autostart").addEventListener("change", () =>
         call("set_autostart", { on: $("autostart").checked }).then((on) => ($("autostart").checked = !!on)).catch(() => {})
       );
-      $("checkUpdate").addEventListener("click", () => { call("check_update"); toast("Đang kiểm tra bản mới..."); });
+      $("checkUpdate").addEventListener("click", () => { call("check_update"); toast(t("checking")); });
       $("extOpen").addEventListener("click", () => call("reveal_extension").catch(toast));
 
       // Update banner.
       $("bannerBtn").addEventListener("click", () => {
-        $("bannerBtn").textContent = "Đang tải...";
+        $("bannerBtn").textContent = t("updating");
         $("bannerBtn").disabled = true;
         call("install_update");
       });
@@ -946,28 +1202,30 @@
 
       const events = {
         hello(d) {
+          const s = d.settings;
           $("version").textContent = d.version;
           conns.max = d.max_connections;
-          conns.value = d.settings.connections;
-          $("connsVal").textContent = d.settings.connections;
+          conns.value = s.connections;
+          $("connsVal").textContent = s.connections;
           paintRange();
-          $("folder").value = d.settings.download_dir;
+          $("folder").value = s.download_dir;
           $("autostart").checked = d.autostart;
-          $("classify").checked = d.settings.classify;
-          $("netMerge").checked = !!d.settings.net_merge;
+          $("classify").checked = s.classify;
+          $("netMerge").checked = !!s.net_merge;
           $("extPath").value = d.extension_dir;
-          $("maxActive").value = String(d.settings.max_active ?? 3);
-          speedLimit = d.settings.speed_limit || 0;
+          $("maxActive").value = String(s.max_active ?? 3);
+          speedLimit = s.speed_limit || 0;
           $("speedLimit").value = String(speedLimit);
-          $("whenDone").value = d.settings.when_done || "";
-          $("watchClipboard").checked = !!d.settings.watch_clipboard;
-          if (d.settings.start_at) $("scheduleTime").value = clock(d.settings.start_at);
-          showSchedule(d.settings.start_at);
+          $("whenDone").value = s.when_done || "";
+          $("watchClipboard").checked = !!s.watch_clipboard;
+          lang = s.language === "en" ? "en" : "vi";
+          $("language").value = lang;
+          applyLang();
+          showTheme(s.theme || "system");
+          showGlass(!!s.glass);
+          if (s.start_at) $("scheduleTime").value = clock(s.start_at);
+          showSchedule(s.start_at);
         },
-        // A link copied while the clipboard is watched.
-        add: (url) => openAdd(url),
-        schedule: showSchedule,
-        when_done: (action) => ($("whenDone").value = action),
         list(data) {
           items = data;
           draw();
@@ -975,23 +1233,30 @@
         net: renderNet,
         toast,
         // From the menu bar and the tray.
-        settings: openSettings,
+        settings: () => go("settings"),
         autostart: (on) => ($("autostart").checked = on),
+        // A link copied while the clipboard is watched.
+        add: (url) => openAdd(url),
+        schedule: showSchedule,
+        when_done: (action) => ($("whenDone").value = action),
         update(d) {
-          $("bannerTxt").innerHTML = `Có bản <b>Lanes ${esc(d.latest)}</b>. Bạn đang dùng ${esc(d.current)}.`;
+          $("bannerTxt").textContent = t("updateOut", d.latest, d.current);
           $("banner").classList.add("show");
         },
         update_progress(p) {
-          $("bannerBtn").textContent = `Đang tải ${p}%`;
+          $("bannerBtn").textContent = t("updatingPct", p);
         },
         update_ready() {
-          $("bannerTxt").textContent = "Đã tải xong bản mới. Khởi động lại để dùng.";
-          $("bannerBtn").textContent = "Khởi động lại";
+          $("bannerTxt").textContent = t("updateReady");
+          $("bannerBtn").textContent = t("restart");
           $("bannerBtn").disabled = false;
           $("bannerBtn").onclick = () => call("restart");
         },
       };
 
+      $("language").value = lang;
+      for (const seg of $("theme").children) seg.classList.toggle("on", seg.dataset.theme === (root.dataset.theme || "system"));
+      applyLang();
       draw();
       call("ready").catch(() => {});
     </script>

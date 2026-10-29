@@ -85,7 +85,11 @@ bar, and is in English and Vietnamese.
 - **A connection setting**, launch at login, and in-app updates.
 - **A Mac window**, light and dark, that follows the system: a floating sidebar that sorts the downloads by state and
   by type and holds the window's buttons, a search field, rows as in Finder with a right-click menu and the keys of a
-  Mac list, and Settings grouped as in System Settings.
+  Mac list, and Settings in tabs of their own (General, Appearance, Downloads, Queue, Network), grouped as in System
+  Settings.
+- **English or Vietnamese**, for the window, the menus and the notifications, and **light, dark or as the system**.
+- **Liquid Glass (beta).** The sidebar, the toolbar and the sheets turn to frosted glass over a soft coloured
+  backdrop.
 
 ## Install
 

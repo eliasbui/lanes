@@ -57,6 +57,15 @@ const AFTER_WAIT: i64 = 60;
 /// The most files one batch link stands for.
 const MAX_BATCH: usize = 1000;
 
+/// Whether the app speaks English rather than Vietnamese in its own words: the menus, notifications and messages it
+/// makes. The page keeps its own copy of its words (ui/index.html).
+pub(crate) static ENGLISH: AtomicBool = AtomicBool::new(false);
+
+/// `vi`, or `en` when the app speaks English.
+pub(crate) fn tr<'a>(vi: &'a str, en: &'a str) -> &'a str {
+    if ENGLISH.load(Ordering::Relaxed) { en } else { vi }
+}
+
 fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
@@ -99,6 +108,12 @@ struct Settings {
     when_done: String,
     /// A link to a file copied anywhere opens the add sheet with it, as IDM does.
     watch_clipboard: bool,
+    /// "vi" or "en".
+    language: String,
+    /// "system", "light" or "dark".
+    theme: String,
+    /// The window drawn in Liquid Glass (beta): see-through panels over a coloured backdrop.
+    glass: bool,
 }
 
 impl Default for Settings {
@@ -113,6 +128,9 @@ impl Default for Settings {
             start_at: 0,
             when_done: String::new(),
             watch_clipboard: false,
+            language: "vi".into(),
+            theme: "system".into(),
+            glass: false,
         }
     }
 }
@@ -181,6 +199,7 @@ fn main() {
         }
     };
     let settings = Settings::load(&dir);
+    ENGLISH.store(settings.language == "en", Ordering::Relaxed);
     let engine = Arc::new(Engine::new());
     engine.set_connections(settings.connections);
     engine.set_net_merge(settings.net_merge);
@@ -278,18 +297,18 @@ fn main() {
         watching,
         busy: false,
         after_at: 0,
+        #[cfg(target_os = "macos")]
+        menu_bar: menus::menu_bar(),
     };
     // Pick up where downloads that were running last time left off.
     app.resume_unfinished();
-    #[cfg(target_os = "macos")]
-    let menu_bar = menus::menu_bar();
 
     event_loop.run(move |event, target, flow| {
         *flow = ControlFlow::Wait;
         match event {
             Event::NewEvents(tao::event::StartCause::Init) => {
                 #[cfg(target_os = "macos")]
-                if let Some(bar) = &menu_bar {
+                if let Some(bar) = &app.menu_bar {
                     bar.install();
                 }
                 app.make_tray();
@@ -344,6 +363,9 @@ struct App {
     /// while it does not.
     busy: bool,
     after_at: i64,
+    /// The menu bar, made again when the language changes.
+    #[cfg(target_os = "macos")]
+    menu_bar: Option<menus::MenuBar>,
 }
 
 impl App {
@@ -368,6 +390,23 @@ impl App {
         self.tray_menu = Some(menu);
     }
 
+    /// The tray's menu and the menu bar in the language just chosen; the tray keeps its icon.
+    fn relabel(&mut self) {
+        let menu = menus::tray(autostart::enabled());
+        if let Some(tray) = &self.tray {
+            tray.set_menu(Some(Box::new(menu.menu.clone())));
+        }
+        self.tray_menu = Some(menu);
+        self.status.clear();
+        #[cfg(target_os = "macos")]
+        {
+            self.menu_bar = menus::menu_bar();
+            if let Some(bar) = &self.menu_bar {
+                bar.install();
+            }
+        }
+    }
+
     /// An entry of the tray's menu or of the menu bar; Quit is handled by the event loop.
     fn menu(&mut self, id: &str, target: &EventLoopWindowTarget<UserEvent>) {
         match id {
@@ -377,7 +416,7 @@ impl App {
                 thread::spawn(move || match clipboard_link() {
                     Some(url) => add_probed(&proxy, vec![url]),
                     None => {
-                        let _ = notify_rust::Notification::new().summary(APP_NAME).body("Chưa sao chép liên kết http hoặc https nào").show();
+                        let _ = notify_rust::Notification::new().summary(APP_NAME).body(tr("Chưa sao chép liên kết http hoặc https nào", "No http or https link has been copied")).show();
                     }
                 });
             }
@@ -481,8 +520,12 @@ impl App {
             self.after_at = 0;
         } else if was_busy {
             self.after_at = now() + AFTER_WAIT;
-            let what = if self.settings.when_done == "shutdown" { "tắt máy" } else { "cho máy ngủ" };
-            let message = format!("Đã tải xong. Lanes sẽ {what} sau một phút, chọn Không làm gì trong Cài đặt để hủy.");
+            let message = match (self.settings.when_done == "shutdown", ENGLISH.load(Ordering::Relaxed)) {
+                (true, false) => "Đã tải xong. Lanes sẽ tắt máy sau một phút, chọn Không làm gì trong Cài đặt để hủy.",
+                (false, false) => "Đã tải xong. Lanes sẽ cho máy ngủ sau một phút, chọn Không làm gì trong Cài đặt để hủy.",
+                (true, true) => "Downloads are done. Lanes shuts the computer down in a minute; choose Do nothing in Settings to cancel.",
+                (false, true) => "Downloads are done. Lanes puts the computer to sleep in a minute; choose Do nothing in Settings to cancel.",
+            };
             let _ = notify_rust::Notification::new().summary(APP_NAME).body(&message).show();
             self.post(&json!({ "event": "toast", "data": message }));
         } else if self.after_at != 0 && now() >= self.after_at {
@@ -517,7 +560,7 @@ impl App {
             .with_inner_size(LogicalSize::new(940.0, 640.0))
             .with_min_inner_size(LogicalSize::new(640.0, 480.0))
             .with_window_icon(icon)
-            .with_theme(None);
+            .with_theme(self.window_theme());
         // On macOS the page runs up under a see-through title bar, so its sidebar holds the window's buttons as Finder's
         // does, and its toolbar moves the window (ipc "drag").
         #[cfg(target_os = "macos")]
@@ -528,7 +571,7 @@ impl App {
         let window = builder.build(target).map_err(|e| e.to_string())?;
         let proxy = self.proxy.clone();
         let builder = WebViewBuilder::new()
-            .with_html(INDEX_HTML)
+            .with_html(page(&self.settings))
             .with_ipc_handler(move |request: Request<String>| {
                 let _ = proxy.send_event(UserEvent::Ipc(request.into_body()));
             })
@@ -547,6 +590,15 @@ impl App {
     fn post(&self, message: &Value) {
         if let Some((_, webview)) = &self.window {
             let _ = webview.evaluate_script(&format!("window.app && app.receive({message})"));
+        }
+    }
+
+    /// The window's own light or dark, for what the page does not draw: the window's buttons, the system's menus.
+    fn window_theme(&self) -> Option<Theme> {
+        match self.settings.theme.as_str() {
+            "light" => Some(Theme::Light),
+            "dark" => Some(Theme::Dark),
+            _ => None,
         }
     }
 
@@ -573,7 +625,7 @@ impl App {
     fn add_sources(&self, urls: Vec<String>) {
         let sources: Vec<String> = urls.into_iter().map(|u| u.trim().to_owned()).filter(|u| !u.is_empty()).collect();
         if !sources.iter().all(|u| u.starts_with("http://") || u.starts_with("https://")) || sources.is_empty() {
-            self.post(&json!({ "event": "toast", "data": "Hãy dán liên kết http hoặc https" }));
+            self.post(&json!({ "event": "toast", "data": tr("Hãy dán liên kết http hoặc https", "Paste an http or https link") }));
             return;
         }
         let proxy = self.proxy.clone();
@@ -587,7 +639,7 @@ impl App {
             dir.push(folder);
         }
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            return self.fail(format!("Không ghi được vào thư mục tải xuống {}: {e}", dir.display()));
+            return self.fail(format!("{} {}: {e}", tr("Không ghi được vào thư mục tải xuống", "Cannot write to the download folder"), dir.display()));
         }
         let path = engine::unique_path(&dir, &req.filename);
         let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
@@ -596,7 +648,7 @@ impl App {
         let sources_json = if req.sources.len() > 1 { serde_json::to_string(&req.sources).unwrap_or_else(|_| "[]".into()) } else { "[]".into() };
         let id = match store::add(&self.db, req.url(), &filename, &dir.to_string_lossy(), &headers_json, &sources_json, &req.kind, now()) {
             Ok(id) => id,
-            Err(e) => return self.fail(format!("Lanes không thêm được {filename}: {e}")),
+            Err(e) => return self.fail(format!("{} {filename}: {e}", tr("Lanes không thêm được", "Lanes could not add"))),
         };
         if let Some(size) = req.size {
             let _ = store::set_size(&self.db, id, size);
@@ -608,7 +660,7 @@ impl App {
 
     /// The files a batch link stands for (`expand`), each added as its own download.
     fn add_batch(&self, urls: Vec<String>) {
-        self.post(&json!({ "event": "toast", "data": format!("Đang thêm {} tệp", urls.len()) }));
+        self.post(&json!({ "event": "toast", "data": format!("{} {}", tr("Đang thêm tệp:", "Adding files:"), urls.len()) }));
         let proxy = self.proxy.clone();
         thread::spawn(move || {
             for url in urls {
@@ -674,7 +726,7 @@ impl App {
 
     fn notify_done(&self, id: i64) {
         if let Ok(Some(row)) = store::get(&self.db, id) {
-            let _ = notify_rust::Notification::new().summary(APP_NAME).body(&format!("Đã tải xong {}", row.filename)).show();
+            let _ = notify_rust::Notification::new().summary(APP_NAME).body(&format!("{} {}", tr("Đã tải xong", "Downloaded"), row.filename)).show();
         }
     }
 
@@ -894,6 +946,27 @@ impl App {
                 self.settings.save(&self.dir);
                 reply(self, Ok(json!(self.settings.watch_clipboard)));
             }
+            "set_language" => {
+                self.settings.language = if args["language"] == "en" { "en".into() } else { "vi".into() };
+                ENGLISH.store(self.settings.language == "en", Ordering::Relaxed);
+                self.settings.save(&self.dir);
+                self.relabel();
+                reply(self, Ok(json!(self.settings.language)));
+            }
+            "set_theme" => {
+                let theme = args["theme"].as_str().unwrap_or_default();
+                self.settings.theme = if matches!(theme, "light" | "dark") { theme.to_owned() } else { "system".into() };
+                self.settings.save(&self.dir);
+                if let Some((window, _)) = &self.window {
+                    window.set_theme(self.window_theme());
+                }
+                reply(self, Ok(json!(self.settings.theme)));
+            }
+            "set_glass" => {
+                self.settings.glass = args["on"].as_bool().unwrap_or(false);
+                self.settings.save(&self.dir);
+                reply(self, Ok(json!(self.settings.glass)));
+            }
             "set_classify" => {
                 self.settings.classify = args["on"].as_bool().unwrap_or(true);
                 self.settings.save(&self.dir);
@@ -1053,7 +1126,7 @@ fn expand(url: &str) -> Option<Result<Vec<String>, String>> {
         let (a, b) = (from.parse::<u64>().ok()?, to.parse::<u64>().ok()?);
         let (a, b) = (a.min(b), a.max(b));
         if b - a >= MAX_BATCH as u64 {
-            return Some(Err(format!("Một loạt có tối đa {MAX_BATCH} tệp")));
+            return Some(Err(format!("{} {MAX_BATCH}", tr("Số tệp tối đa của một loạt:", "The most files in one batch:"))));
         }
         let width = if from.starts_with('0') { from.len() } else { 0 };
         (a..=b).map(|n| format!("{n:0width$}")).collect()
@@ -1078,9 +1151,17 @@ fn power(action: &str) -> Result<(), String> {
     };
     match cmd(program).args(args).status() {
         Ok(status) if status.success() => Ok(()),
-        Ok(_) | Err(_) if action == "shutdown" => Err("Lanes không tắt được máy. Trên macOS, hãy cho Lanes điều khiển System Events trong Cài đặt hệ thống, Quyền riêng tư và bảo mật, Tự động hóa.".into()),
-        _ => Err("Lanes không cho máy ngủ được".into()),
+        Ok(_) | Err(_) if action == "shutdown" => Err(tr("Lanes không tắt được máy. Trên macOS, hãy cho Lanes điều khiển System Events trong Cài đặt hệ thống, Quyền riêng tư và bảo mật, Tự động hóa.", "Lanes could not shut the computer down. On macOS, let Lanes control System Events in System Settings, Privacy and Security, Automation.").into()),
+        _ => Err(tr("Lanes không cho máy ngủ được", "Lanes could not put the computer to sleep").into()),
     }
+}
+
+/// The page with the language, the light or dark and the glass of the settings on its root, so its first frame is
+/// already drawn in them.
+fn page(settings: &Settings) -> String {
+    let glass = if settings.glass { " data-glass" } else { "" };
+    let root = format!("<html lang=\"{}\" data-theme=\"{}\"{glass}>", settings.language, settings.theme);
+    INDEX_HTML.replacen("<html lang=\"vi\">", &root, 1)
 }
 
 /// The links of net-merge as the page shows them; the addresses stay here.
@@ -1169,6 +1250,13 @@ mod tests {
         let settings: super::Settings = serde_json::from_str(r#"{"download_dir": "/x", "connections": 4}"#).unwrap();
         assert_eq!((settings.download_dir.as_str(), settings.connections, settings.classify), ("/x", 4, true));
         assert_eq!((settings.max_active, settings.speed_limit, settings.start_at, settings.when_done.as_str()), (3, 0, 0, ""));
+    }
+
+    #[test]
+    fn the_page_comes_in_the_language_and_look_of_the_settings() {
+        let settings = super::Settings { language: "en".into(), theme: "dark".into(), glass: true, ..Default::default() };
+        assert!(super::page(&settings).contains(r#"<html lang="en" data-theme="dark" data-glass>"#), "the root of ui/index.html is still <html lang=\"vi\">");
+        assert!(super::page(&super::Settings::default()).contains(r#"<html lang="vi" data-theme="system">"#));
     }
 
     #[test]

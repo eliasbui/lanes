@@ -4,6 +4,7 @@
 //! which gives the window's page copy and paste with the usual keys. Both menus use the ids below, which main.rs acts
 //! on.
 
+use crate::tr;
 use serde_json::Value;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 
@@ -34,24 +35,24 @@ pub fn tray(autostart: bool) -> Tray {
     let tray = Tray {
         menu: Menu::new(),
         status: MenuItem::new(Status::default().line(), false, None),
-        pause: MenuItem::with_id(PAUSE_ALL, "Tạm dừng tất cả", false, None),
-        resume: MenuItem::with_id(RESUME_ALL, "Tiếp tục tất cả", false, None),
-        autostart: CheckMenuItem::with_id(AUTOSTART, "Mở cùng máy tính", true, autostart, None),
+        pause: MenuItem::with_id(PAUSE_ALL, tr("Tạm dừng tất cả", "Pause all"), false, None),
+        resume: MenuItem::with_id(RESUME_ALL, tr("Tiếp tục tất cả", "Resume all"), false, None),
+        autostart: CheckMenuItem::with_id(AUTOSTART, tr("Mở cùng máy tính", "Open at login"), true, autostart, None),
     };
     let _ = tray.menu.append_items(&[
         &tray.status,
         &PredefinedMenuItem::separator(),
-        &item(OPEN, "Mở Lanes"),
-        &item(SETTINGS, "Cài đặt..."),
-        &item(ADD_COPIED, "Tải liên kết đã sao chép"),
-        &item(FOLDER, "Mở thư mục tải xuống"),
+        &item(OPEN, tr("Mở Lanes", "Open Lanes")),
+        &item(SETTINGS, tr("Cài đặt...", "Settings...")),
+        &item(ADD_COPIED, tr("Tải liên kết đã sao chép", "Download the copied link")),
+        &item(FOLDER, tr("Mở thư mục tải xuống", "Open the download folder")),
         &PredefinedMenuItem::separator(),
         &tray.pause,
         &tray.resume,
         &PredefinedMenuItem::separator(),
         &tray.autostart,
         &PredefinedMenuItem::separator(),
-        &item(QUIT, "Thoát"),
+        &item(QUIT, tr("Thoát", "Quit")),
     ]);
     tray
 }
@@ -95,10 +96,10 @@ impl Status {
     /// The first line of the tray's menu.
     pub fn line(&self) -> String {
         match (self.running, self.paused) {
-            (0, 0) => "Không có gì đang tải".into(),
-            (0, paused) => format!("{paused} mục đang tạm dừng"),
+            (0, 0) => tr("Không có gì đang tải", "Nothing is downloading").into(),
+            (0, paused) => format!("{paused} {}", tr("mục đang tạm dừng", "paused")),
             (running, _) => {
-                let mut line = format!("Đang tải {running} mục");
+                let mut line = format!("{} {running} {}", tr("Đang tải", "Downloading"), tr("mục", if running == 1 { "item" } else { "items" }));
                 if let Some(percent) = self.percent {
                     line += &format!(", {percent}%");
                 }
@@ -155,57 +156,57 @@ pub fn menu_bar() -> Option<MenuBar> {
     let about = AboutMetadata {
         name: Some("Lanes".into()),
         version: Some(env!("CARGO_PKG_VERSION").into()),
-        comments: Some("Trình quản lý tải xuống mở".into()),
-        copyright: Some("Copyright (c) 2026 Doanh Thai Bui. Giấy phép MIT.".into()),
+        comments: Some(tr("Trình quản lý tải xuống mở", "An open download manager").into()),
+        copyright: Some(format!("Copyright (c) 2026 Doanh Thai Bui. {}", tr("Giấy phép MIT.", "MIT License."))),
         ..Default::default()
     };
     let app = Submenu::with_items(
         "Lanes",
         true,
         &[
-            &PredefinedMenuItem::about(Some("Giới thiệu Lanes"), Some(about)),
+            &PredefinedMenuItem::about(Some(tr("Giới thiệu Lanes", "About Lanes")), Some(about)),
             &PredefinedMenuItem::separator(),
-            &MenuItem::with_id(SETTINGS, "Cài đặt...", true, key(Code::Comma)),
+            &MenuItem::with_id(SETTINGS, tr("Cài đặt...", "Settings..."), true, key(Code::Comma)),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::services(Some("Dịch vụ")),
+            &PredefinedMenuItem::services(Some(tr("Dịch vụ", "Services"))),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::hide(Some("Ẩn Lanes")),
-            &PredefinedMenuItem::hide_others(Some("Ẩn các ứng dụng khác")),
-            &PredefinedMenuItem::show_all(Some("Hiện tất cả")),
+            &PredefinedMenuItem::hide(Some(tr("Ẩn Lanes", "Hide Lanes"))),
+            &PredefinedMenuItem::hide_others(Some(tr("Ẩn các ứng dụng khác", "Hide Others"))),
+            &PredefinedMenuItem::show_all(Some(tr("Hiện tất cả", "Show All"))),
             &PredefinedMenuItem::separator(),
-            &MenuItem::with_id(QUIT, "Thoát Lanes", true, key(Code::KeyQ)),
+            &MenuItem::with_id(QUIT, tr("Thoát Lanes", "Quit Lanes"), true, key(Code::KeyQ)),
         ],
     );
     let edit = Submenu::with_items(
-        "Sửa",
+        tr("Sửa", "Edit"),
         true,
         &[
-            &PredefinedMenuItem::undo(Some("Hoàn tác")),
-            &PredefinedMenuItem::redo(Some("Làm lại")),
+            &PredefinedMenuItem::undo(Some(tr("Hoàn tác", "Undo"))),
+            &PredefinedMenuItem::redo(Some(tr("Làm lại", "Redo"))),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::cut(Some("Cắt")),
-            &PredefinedMenuItem::copy(Some("Sao chép")),
-            &PredefinedMenuItem::paste(Some("Dán")),
-            &PredefinedMenuItem::select_all(Some("Chọn tất cả")),
+            &PredefinedMenuItem::cut(Some(tr("Cắt", "Cut"))),
+            &PredefinedMenuItem::copy(Some(tr("Sao chép", "Copy"))),
+            &PredefinedMenuItem::paste(Some(tr("Dán", "Paste"))),
+            &PredefinedMenuItem::select_all(Some(tr("Chọn tất cả", "Select All"))),
         ],
     );
-    let view = Submenu::with_items("Xem", true, &[&PredefinedMenuItem::fullscreen(Some("Vào chế độ toàn màn hình"))]);
+    let view = Submenu::with_items(tr("Xem", "View"), true, &[&PredefinedMenuItem::fullscreen(Some(tr("Vào chế độ toàn màn hình", "Enter Full Screen")))]);
     let window = Submenu::with_items(
-        "Cửa sổ",
+        tr("Cửa sổ", "Window"),
         true,
         &[
-            &PredefinedMenuItem::minimize(Some("Thu nhỏ")),
-            &PredefinedMenuItem::maximize(Some("Phóng to")),
+            &PredefinedMenuItem::minimize(Some(tr("Thu nhỏ", "Minimize"))),
+            &PredefinedMenuItem::maximize(Some(tr("Phóng to", "Zoom"))),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::close_window(Some("Đóng cửa sổ")),
+            &PredefinedMenuItem::close_window(Some(tr("Đóng cửa sổ", "Close Window"))),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::bring_all_to_front(Some("Đưa tất cả lên trước")),
+            &PredefinedMenuItem::bring_all_to_front(Some(tr("Đưa tất cả lên trước", "Bring All to Front"))),
         ],
     );
     let help = Submenu::with_items(
-        "Trợ giúp",
+        tr("Trợ giúp", "Help"),
         true,
-        &[&MenuItem::with_id(HOME_PAGE, "Lanes trên GitHub", true, None), &MenuItem::with_id(REPORT, "Báo lỗi", true, None)],
+        &[&MenuItem::with_id(HOME_PAGE, tr("Lanes trên GitHub", "Lanes on GitHub"), true, None), &MenuItem::with_id(REPORT, tr("Báo lỗi", "Report a Problem"), true, None)],
     );
     let bar = Menu::new();
     let (app, edit, view, window, help) = (app.ok()?, edit.ok()?, view.ok()?, window.ok()?, help.ok()?);
