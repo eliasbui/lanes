@@ -58,6 +58,10 @@ pub struct Job {
     pub user_agent: String,
     /// The URL is an HLS playlist the video button picked.
     pub hls: bool,
+    /// The URL is a video page, and this the yt-dlp format the video button picked.
+    pub format: String,
+    /// The size the video button estimated, for a page; 0 when unknown.
+    pub size: u64,
 }
 
 impl Job {
@@ -75,7 +79,21 @@ impl Job {
             cookie: field("cookie", MAX_HEADER),
             user_agent: field("userAgent", 1000),
             hls: message["kind"] == "hls",
+            format: match message["kind"].as_str() {
+                Some("page") => Some(field("format", 200)).filter(|f| crate::ytdlp::valid_format(f))?,
+                _ => String::new(),
+            },
+            size: message["size"].as_f64().map_or(0, |n| n as u64),
         })
+    }
+
+    pub fn kind(&self) -> crate::engine::Kind {
+        use crate::engine::Kind;
+        match (self.hls, self.format.is_empty()) {
+            (_, false) => Kind::Page { format: self.format.clone() },
+            (true, true) => Kind::Hls,
+            (false, true) => Kind::File,
+        }
     }
 
     /// The request headers for this job, only the ones the page actually carried.
@@ -127,7 +145,7 @@ pub fn host(dir: &Path) {
 }
 
 /// The answer to one message of the extension: `ping` for the popup, `variants` for the resolutions of an HLS video,
-/// and anything else is a download, put in the inbox. Every answer carries the app's version, which tells the
+/// `page` for the formats yt-dlp finds on a video page, and anything else is a download, put in the inbox. Every answer carries the app's version, which tells the
 /// extension when the app has updated its files (background.js).
 fn answer(dir: &Path, message: &Value) -> Value {
     let mut reply = reply_to(dir, message);
@@ -147,6 +165,17 @@ fn reply_to(dir: &Path, message: &Value) -> Value {
                     reply
                 }
                 Err(error) => json!({ "ok": false, "error": error }),
+            },
+            None => invalid(),
+        },
+        Some("page") => match Job::from_message(message) {
+            Some(job) => match crate::ytdlp::formats(&job.url) {
+                Ok(formats) => {
+                    let mut reply = json!(formats);
+                    reply["ok"] = json!(true);
+                    reply
+                }
+                Err(error) => json!({ "ok": false, "error": error, "missing": crate::ytdlp::program("yt-dlp").is_none() }),
             },
             None => invalid(),
         },
@@ -347,6 +376,10 @@ mod tests {
         ]);
         assert!(!job.hls);
         assert!(Job::from_message(&json!({ "url": "https://x.com/m.m3u8", "kind": "hls" })).unwrap().hls);
+        let page = Job::from_message(&json!({ "url": "https://youtube.com/watch?v=x", "kind": "page", "format": "136+140", "size": 1e6 })).unwrap();
+        assert_eq!(page.kind(), crate::engine::Kind::Page { format: "136+140".into() });
+        assert_eq!(page.size, 1_000_000);
+        assert_eq!(Job::from_message(&json!({ "url": "https://youtube.com/watch?v=x", "kind": "page", "format": "18 --exec x" })), None);
         assert_eq!(Job::from_message(&json!({ "url": "javascript:alert(1)" })), None);
         assert_eq!(Job::from_message(&json!({ "filename": "a" })), None);
         assert!(Job::from_message(&json!({ "url": "https://x.com/a" })).unwrap().headers().is_empty());

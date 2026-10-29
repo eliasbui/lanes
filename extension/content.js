@@ -76,7 +76,7 @@
         padding: 8px 10px; border-radius: 9px;
       }
       .item:hover { background: rgba(10, 132, 255, 0.85); }
-      .item b { font-weight: 650; }
+      .item b { font-weight: 650; white-space: nowrap; }
       .item span { opacity: 0.75; font-size: 12px; text-align: right; }
       .note { padding: 8px 10px; opacity: 0.82; font-size: 12.5px; }
     </style>
@@ -210,10 +210,7 @@
     return out;
   }
 
-  function nothingFound() {
-    if (/(^|\.)youtube\.com$/.test(location.hostname)) return "YouTube phát video theo luồng DASH, bản này của Lanes chưa tải được.";
-    return "Chưa thấy bản tải được. Hãy phát video vài giây rồi bấm lại. Video DASH hoặc có DRM chưa tải được.";
-  }
+  const nothingFound = "Chưa thấy bản tải được. Hãy phát video vài giây rồi bấm lại. Video có DRM thì không tải được.";
 
   async function openMenu() {
     menuOpen = true;
@@ -249,7 +246,7 @@
       menu.append(button);
     }
     const notes = reply?.notes || [];
-    if (!reply?.items?.length && !notes.length) note(nothingFound());
+    if (!reply?.items?.length && !notes.length) note(nothingFound);
     notes.forEach(note);
   }
 

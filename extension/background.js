@@ -2,7 +2,8 @@
 // through native messaging, with the page's Referer, Cookie and User-Agent so a site that checks them serves the
 // file to Lanes as it did to the browser (src/browser.rs). A right-click menu sends a link or a video on demand;
 // auto-capture, on by default, sends ordinary downloads. It also notes the video files and HLS playlists each tab
-// loads, which the video button (content.js) offers by resolution. Nothing leaves the machine: the message goes to
+// loads, which the video button (content.js) offers by resolution; YouTube, and a page where it finds none, the app
+// reads through yt-dlp (src/ytdlp.rs). Nothing leaves the machine: the message goes to
 // the local app only.
 "use strict";
 
@@ -14,6 +15,9 @@ const SKIP = /\.(html?|xml|json|css|js|txt)(\?|$)/i;
 // What the video button can offer: a whole video file the page played, or an HLS playlist.
 const VIDEO_FILE = /\.(mp4|m4v|webm|mov|mkv|flv|avi|3gp|ogv)$/i;
 const HLS_FILE = /\.m3u8$/i;
+// YouTube, whose player Lanes cannot read itself, and the addresses of its single videos there.
+const YOUTUBE = /^https?:\/\/([^/]+\.)?(youtube\.com|youtube-nocookie\.com|youtu\.be)\//i;
+const YOUTUBE_VIDEO = /^https?:\/\/[^/]+\/(watch\b|shorts\/|embed\/|live\/)|youtu\.be\/./i;
 // The most media remembered per tab; the oldest goes first.
 const MAX_MEDIA = 40;
 
@@ -80,9 +84,10 @@ function note(ok, text) {
   });
 }
 
-// Sends one download to the app with the headers the page used. `kind` is "hls" for an HLS playlist.
-async function toLanes(url, filename, referrer, kind = "") {
-  const message = { url, filename: filename || "", referrer: referrer || "", cookie: await cookieHeader(url), userAgent: navigator.userAgent, kind };
+// Sends one download to the app with the headers the page used. `extra` says what else the video button knows: its
+// `kind` ("hls" for an HLS playlist, "page" for a video page yt-dlp reads), the yt-dlp `format` and the `size`.
+async function toLanes(url, filename, referrer, extra = {}) {
+  const message = { url, filename: filename || "", referrer: referrer || "", cookie: await cookieHeader(url), userAgent: navigator.userAgent, ...extra };
   const reply = await send(message);
   const name = (filename || url).split("/").pop().slice(0, 40);
   note(!!reply.ok, reply.ok ? `Đang tải "${name}"` : reply.error || "Lanes không nhận được liên kết.");
@@ -222,6 +227,19 @@ function hlsItem(v, reply, title) {
   };
 }
 
+function pageItem(c, reply, url) {
+  return {
+    kind: "page",
+    url,
+    format: c.format,
+    height: c.height || 0,
+    size: c.size || 0,
+    label: c.height ? `${c.height}p` : "Chỉ âm thanh",
+    detail: [c.ext.toUpperCase(), c.size ? `khoảng ${human(c.size)}` : ""].filter(Boolean).join(" · "),
+    filename: nameFor(reply.title, c.height, c.ext),
+  };
+}
+
 // What the video button offers for one video. A video playing a file (`direct`) offers its own sources only. A
 // streaming one offers the media its frame loaded (or, when that frame loaded none, the whole tab's), less the files
 // `others` videos play. Each HLS playlist is opened up into its resolutions by the app.
@@ -263,7 +281,26 @@ async function streams(sender, { sources = [], direct = false, others = [], titl
     else if (!named.has(m.url)) items.push(...reply.variants.map((v) => hlsItem(v, reply, title)));
   }
 
-  const unique = items.filter((item, i) => items.findIndex((other) => other.url === item.url) === i);
+  // YouTube, or a page where nothing was found above: the app asks yt-dlp. Elsewhere its failure says no more than
+  // "nothing found", unless yt-dlp is missing.
+  const youtube = YOUTUBE.test(referrer);
+  if (youtube && !YOUTUBE_VIDEO.test(referrer)) {
+    notes.push("Hãy mở video này ra trang riêng của nó để tải.");
+  } else if (youtube || !items.length) {
+    // An app before 0.4 does not know "page" and would take it for a download of the page itself.
+    const app = await send({ cmd: "ping" });
+    const reply = app.ok && newer("0.4.0", app.version || "0")
+      ? { ok: false, missing: true, error: "Cập nhật app Lanes lên bản mới nhất để tải video từ trang này." }
+      : app.ok ? await send({ cmd: "page", url: referrer }) : app;
+    if (reply.ok) {
+      items.push(...reply.choices.map((c) => pageItem(c, reply, referrer)));
+      if (reply.hint) notes.push(reply.hint);
+    } else if (youtube || reply.missing) {
+      notes.push(reply.error);
+    }
+  }
+
+  const unique = items.filter((item, i) => items.findIndex((other) => other.url === item.url && other.format === item.format) === i);
   unique.sort((a, b) => b.height - a.height || b.size - a.size);
   return { items: unique, notes: [...new Set(notes)] };
 }
@@ -278,8 +315,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     return true;
   }
   if (message?.type === "download") {
-    const { url = "", filename = "", kind = "" } = message.item || {};
-    toLanes(url, filename, sender.url || sender.tab?.url || "", kind === "hls" ? "hls" : "").then(reply);
+    const { url = "", filename = "", kind = "", format = "", size = 0 } = message.item || {};
+    const extra = kind === "hls" ? { kind } : kind === "page" ? { kind, format, size } : {};
+    toLanes(url, filename, sender.url || sender.tab?.url || "", extra).then(reply);
     return true;
   }
 });

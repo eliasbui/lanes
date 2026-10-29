@@ -1,7 +1,7 @@
 //! The list of downloads in SQLite, so the app finds them again after a restart. The live progress lives in the
 //! engine and its sidecars; this keeps the lasting facts: where each file goes, its size, and whether it finished.
 
-use crate::engine::state;
+use crate::engine::{Kind, state};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -23,6 +23,8 @@ pub struct Row {
     pub sources: String,
     /// An HLS video from the browser's video button: `url` is its playlist.
     pub hls: bool,
+    /// The yt-dlp format of a video page from the video button: `url` is the page. Empty for anything else.
+    pub format: String,
 }
 
 impl Row {
@@ -36,6 +38,14 @@ impl Row {
     }
 
     /// The mirror pool for the engine: the stored list, or just the primary URL when none was stored.
+    pub fn kind(&self) -> Kind {
+        match (self.hls, self.format.is_empty()) {
+            (_, false) => Kind::Page { format: self.format.clone() },
+            (true, true) => Kind::Hls,
+            (false, true) => Kind::File,
+        }
+    }
+
     pub fn source_list(&self) -> Vec<String> {
         match serde_json::from_str::<Vec<String>>(&self.sources) {
             Ok(list) if !list.is_empty() => list,
@@ -60,12 +70,14 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
             error     TEXT NOT NULL DEFAULT '',
             headers   TEXT NOT NULL DEFAULT '[]',
             sources   TEXT NOT NULL DEFAULT '[]',
-            hls       INTEGER NOT NULL DEFAULT 0
+            hls       INTEGER NOT NULL DEFAULT 0,
+            format    TEXT NOT NULL DEFAULT ''
         );",
     )?;
     // The columns added after 0.1.0, which a list made by an older version gains here. 0.2.0 added sources to the new
-    // table only, so a list from 0.1.0 failed every read and write until this.
-    for (column, kind) in [("sources", "TEXT NOT NULL DEFAULT '[]'"), ("hls", "INTEGER NOT NULL DEFAULT 0")] {
+    // table only, so a list from 0.1.0 failed every read and write until 0.3.3.
+    let added = [("sources", "TEXT NOT NULL DEFAULT '[]'"), ("hls", "INTEGER NOT NULL DEFAULT 0"), ("format", "TEXT NOT NULL DEFAULT ''")];
+    for (column, kind) in added {
         if db.prepare(&format!("SELECT {column} FROM downloads LIMIT 0")).is_err() {
             db.execute(&format!("ALTER TABLE downloads ADD COLUMN {column} {kind}"), [])?;
         }
@@ -75,10 +87,14 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 /// Records a new download and gives its id. `headers` and `sources` are JSON arrays, `[]` when empty.
 #[allow(clippy::too_many_arguments)]
-pub fn add(db: &Connection, url: &str, filename: &str, dir: &str, headers: &str, sources: &str, hls: bool, now: i64) -> rusqlite::Result<i64> {
+pub fn add(db: &Connection, url: &str, filename: &str, dir: &str, headers: &str, sources: &str, kind: &Kind, now: i64) -> rusqlite::Result<i64> {
+    let format = match kind {
+        Kind::Page { format } => format.as_str(),
+        _ => "",
+    };
     db.execute(
-        "INSERT INTO downloads (url, filename, dir, size, status, added_at, headers, sources, hls) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8)",
-        params![url, filename, dir, state::QUEUED, now, headers, sources, hls],
+        "INSERT INTO downloads (url, filename, dir, size, status, added_at, headers, sources, hls, format) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![url, filename, dir, state::QUEUED, now, headers, sources, *kind == Kind::Hls, format],
     )?;
     Ok(db.last_insert_rowid())
 }
@@ -101,14 +117,14 @@ pub fn remove(db: &Connection, id: i64) -> rusqlite::Result<()> {
 }
 
 pub fn get(db: &Connection, id: i64) -> rusqlite::Result<Option<Row>> {
-    db.query_row("SELECT id, url, filename, dir, size, status, added_at, error, headers, sources, hls FROM downloads WHERE id = ?1", params![id], row)
+    db.query_row("SELECT id, url, filename, dir, size, status, added_at, error, headers, sources, hls, format FROM downloads WHERE id = ?1", params![id], row)
         .optional()
 }
 
 /// Every download, newest first.
 pub fn list(db: &Connection) -> rusqlite::Result<Vec<Row>> {
     let mut stmt =
-        db.prepare("SELECT id, url, filename, dir, size, status, added_at, error, headers, sources, hls FROM downloads ORDER BY added_at DESC, id DESC")?;
+        db.prepare("SELECT id, url, filename, dir, size, status, added_at, error, headers, sources, hls, format FROM downloads ORDER BY added_at DESC, id DESC")?;
     let rows = stmt.query_map([], row)?.collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -126,6 +142,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Row> {
         headers: r.get(8)?,
         sources: r.get(9)?,
         hls: r.get(10)?,
+        format: r.get(11)?,
     })
 }
 
@@ -136,7 +153,7 @@ mod tests {
     #[test]
     fn a_download_is_added_listed_and_removed() {
         let db = open(Path::new(":memory:")).unwrap();
-        let id = add(&db, "https://x.com/a.zip", "a.zip", "/tmp", "[]", "[]", false, 100).unwrap();
+        let id = add(&db, "https://x.com/a.zip", "a.zip", "/tmp", "[]", "[]", &Kind::File, 100).unwrap();
         set_size(&db, id, 4096).unwrap();
         set_status(&db, id, state::DONE, "").unwrap();
         let rows = list(&db).unwrap();
@@ -153,7 +170,7 @@ mod tests {
     #[test]
     fn a_failure_keeps_its_reason() {
         let db = open(Path::new(":memory:")).unwrap();
-        let id = add(&db, "https://x.com/a", "a", "/tmp", "[]", "[]", false, 1).unwrap();
+        let id = add(&db, "https://x.com/a", "a", "/tmp", "[]", "[]", &Kind::File, 1).unwrap();
         set_status(&db, id, state::ERROR, "Máy chủ trả mã 404").unwrap();
         assert_eq!(get(&db, id).unwrap().unwrap().error, "Máy chủ trả mã 404");
     }
@@ -173,10 +190,13 @@ mod tests {
             .unwrap();
         let db = open(&path).unwrap();
         let old = &list(&db).unwrap()[0];
-        assert!(!old.hls);
+        assert_eq!(old.kind(), Kind::File);
         assert_eq!(old.source_list(), vec!["https://x.com/a".to_string()]);
-        let id = add(&db, "https://x.com/v.m3u8", "v.ts", "/tmp", "[]", "[]", true, 2).unwrap();
-        assert!(get(&db, id).unwrap().unwrap().hls);
+        let id = add(&db, "https://x.com/v.m3u8", "v.ts", "/tmp", "[]", "[]", &Kind::Hls, 2).unwrap();
+        assert_eq!(get(&db, id).unwrap().unwrap().kind(), Kind::Hls);
+        let page = Kind::Page { format: "136+140".into() };
+        let id = add(&db, "https://youtube.com/watch?v=x", "v.mp4", "/tmp", "[]", "[]", &page, 3).unwrap();
+        assert_eq!(get(&db, id).unwrap().unwrap().kind(), page);
         drop(db);
         let _ = std::fs::remove_file(&path);
     }
@@ -184,9 +204,9 @@ mod tests {
     #[test]
     fn source_list_falls_back_to_the_primary_url() {
         let db = open(Path::new(":memory:")).unwrap();
-        let one = add(&db, "https://a/f", "f", "/tmp", "[]", "[]", false, 1).unwrap();
+        let one = add(&db, "https://a/f", "f", "/tmp", "[]", "[]", &Kind::File, 1).unwrap();
         assert_eq!(get(&db, one).unwrap().unwrap().source_list(), vec!["https://a/f".to_string()]);
-        let many = add(&db, "https://a/f", "f", "/tmp", "[]", r#"["https://a/f","https://b/f"]"#, false, 2).unwrap();
+        let many = add(&db, "https://a/f", "f", "/tmp", "[]", r#"["https://a/f","https://b/f"]"#, &Kind::File, 2).unwrap();
         assert_eq!(get(&db, many).unwrap().unwrap().source_list(), vec!["https://a/f".to_string(), "https://b/f".to_string()]);
     }
 }

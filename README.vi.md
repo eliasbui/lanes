@@ -41,8 +41,12 @@ tiếng Việt.
 - **Nút tải video.** Rê chuột lên một video, nút "Tải video" có biểu tượng Lanes hiện ngay dưới video như IDM (nằm trong góc dưới của video khi video chạm đáy cửa sổ); bấm vào sẽ thấy các bản Lanes tải được cho
   video đó theo độ phân giải (1080p, 720p, ...) kèm dung lượng hoặc dung lượng ước tính. Tệp video nguyên vẹn đi qua
   engine nhiều kết nối như thường; luồng HLS (`.m3u8`) được tải song song từng đoạn, kể cả mã hóa AES-128, tiếp tục
-  được khi dừng, rồi ghép thành một tệp `.ts` hoặc `.mp4`. Chưa hỗ trợ: YouTube và các luồng DASH khác, phát trực
-  tiếp, ghép tiếng nằm ở luồng riêng, và video có DRM (Lanes không bao giờ động tới).
+  được khi dừng, rồi ghép thành một tệp `.ts` hoặc `.mp4`. YouTube và các trang Lanes không tự tìm ra luồng (trang
+  DASH) đi qua yt-dlp: menu liệt kê mọi độ phân giải tới 2160p và bản chỉ âm thanh, bản được chọn tải về và ghép thành
+  MP4. Không hỗ trợ: phát trực tiếp, và video có DRM (Lanes không bao giờ động tới).
+- **yt-dlp và ffmpeg** cần cho YouTube và các trang DASH; Lanes tự tìm ở chỗ Homebrew hoặc winget cài. Thiếu ffmpeg thì
+  chỉ có các bản sẵn tiếng, trên YouTube là 360p. macOS: `brew install yt-dlp ffmpeg`. Windows:
+  `winget install yt-dlp.yt-dlp DenoLand.Deno Gyan.FFmpeg`.
 - **net-merge (beta).** Dán nhiều liên kết mirror của cùng một file, Lanes chia các đoạn cho từng nguồn và gộp băng
   thông. Nguồn nào khác kích thước hoặc không cho tải theo đoạn sẽ bị bỏ; mỗi đoạn tự chuyển sang nguồn khác khi một
   nguồn lỗi. (net-merge của Lanes là gộp nhiều nguồn tải, không liên quan tới các công cụ NetMerge gộp đường mạng.)
@@ -105,6 +109,7 @@ Rust 1.85 trở lên.
   đoạn ghi theo vị trí, tệp đi kèm để resume, và thử lại khi lỗi.
 - `src/hls.rs` — danh sách HLS: các độ phân giải của bản chính, các đoạn, khóa và đoạn byte của một bản, và giải mã
   AES-128.
+- `src/ytdlp.rs` — trang video qua yt-dlp: các định dạng thành lựa chọn trong menu, và việc tải cùng tiến độ.
 - `src/store.rs` — danh sách tải trong SQLite.
 - `src/browser.rs` — native host, hộp thư mà tiện ích thả việc vào, và tiện ích app mang theo.
 - `src/update.rs` — tự cập nhật: đọc bản mới nhất, kiểm tra SHA-256, thay app tại chỗ, khởi động lại.

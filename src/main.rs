@@ -6,6 +6,7 @@ mod browser;
 mod engine;
 mod hls;
 mod store;
+mod ytdlp;
 mod update;
 
 use engine::Engine;
@@ -94,13 +95,13 @@ impl Settings {
 }
 
 /// A download to add, once its name and size are known from a probe. `sources` holds the net-merge mirror pool with
-/// the primary first; an ordinary download has one entry. `hls` marks an HLS playlist from the video button.
+/// the primary first; an ordinary download has one entry. `kind` says what the URL is.
 struct AddReq {
     sources: Vec<String>,
     filename: String,
     size: Option<u64>,
     headers: Vec<(String, String)>,
-    hls: bool,
+    kind: engine::Kind,
 }
 
 impl AddReq {
@@ -146,6 +147,10 @@ fn main() {
     let engine = Arc::new(Engine::new());
     engine.set_connections(settings.connections);
     let background = std::env::args().any(|a| a == autostart::BACKGROUND);
+    // Notifications come from Lanes. Left unset, the library looks for an app named "use_default" through AppleScript
+    // before the first one, and macOS asks the user where that app is.
+    #[cfg(target_os = "macos")]
+    let _ = notify_rust::set_application("com.eliasbui.lanes");
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -183,14 +188,17 @@ fn main() {
                     let headers = job.headers();
                     // An HLS playlist has no size until its segments are in; the extension names it with its type. A
                     // file the browser had not named yet takes the server's name (Content-Disposition) from the probe.
-                    let probe = if job.hls { None } else { engine::probe(&job.url, &headers).ok() };
-                    let size = probe.as_ref().and_then(|p| p.size);
+                    // A video page's size is the estimate the extension showed.
+                    let kind = job.kind();
+                    let probe = if kind == engine::Kind::File { engine::probe(&job.url, &headers).ok() } else { None };
+                    let size = probe.as_ref().and_then(|p| p.size).or((job.size > 0).then_some(job.size));
                     let filename = match job.filename {
                         name if !name.is_empty() => name,
-                        _ if job.hls => "video.ts".into(),
+                        _ if kind == engine::Kind::Hls => "video.ts".into(),
+                        _ if kind != engine::Kind::File => "video.mp4".into(),
                         _ => probe.map(|p| p.filename).unwrap_or_else(|| engine::filename_from(&job.url, None)),
                     };
-                    let _ = proxy.send_event(UserEvent::Added(AddReq { sources: vec![job.url], filename, size, headers, hls: job.hls }));
+                    let _ = proxy.send_event(UserEvent::Added(AddReq { sources: vec![job.url], filename, size, headers, kind }));
                 }
                 thread::sleep(INBOX_EVERY);
             }
@@ -356,7 +364,7 @@ impl App {
     fn resume_unfinished(&self) {
         for row in store::list(&self.db).unwrap_or_default() {
             if matches!(row.status, engine::state::RUNNING | engine::state::QUEUED) {
-                self.engine.start(row.id, row.source_list(), row.final_path(), row.header_pairs(), row.hls);
+                self.engine.start(row.id, row.source_list(), row.final_path(), row.header_pairs(), row.kind());
             }
         }
     }
@@ -376,7 +384,7 @@ impl App {
             let probe = engine::probe(&primary, &[]).ok();
             let filename = probe.as_ref().map(|p| p.filename.clone()).unwrap_or_else(|| engine::filename_from(&primary, None));
             let size = probe.and_then(|p| p.size);
-            let _ = proxy.send_event(UserEvent::Added(AddReq { sources, filename, size, headers: Vec::new(), hls: false }));
+            let _ = proxy.send_event(UserEvent::Added(AddReq { sources, filename, size, headers: Vec::new(), kind: engine::Kind::File }));
         });
     }
 
@@ -394,7 +402,7 @@ impl App {
         let headers_json = serde_json::to_string(&req.headers).unwrap_or_else(|_| "[]".into());
         // Several sources are stored for a net-merge resume; one source stores an empty list and falls back to the url.
         let sources_json = if req.sources.len() > 1 { serde_json::to_string(&req.sources).unwrap_or_else(|_| "[]".into()) } else { "[]".into() };
-        let id = match store::add(&self.db, req.url(), &filename, &dir.to_string_lossy(), &headers_json, &sources_json, req.hls, now()) {
+        let id = match store::add(&self.db, req.url(), &filename, &dir.to_string_lossy(), &headers_json, &sources_json, &req.kind, now()) {
             Ok(id) => id,
             Err(e) => return self.fail(format!("Lanes không thêm được {filename}: {e}")),
         };
@@ -402,7 +410,7 @@ impl App {
             let _ = store::set_size(&self.db, id, size);
         }
         let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
-        self.engine.start(id, req.sources, path, req.headers, req.hls);
+        self.engine.start(id, req.sources, path, req.headers, req.kind);
         self.push_list();
     }
 
@@ -550,7 +558,7 @@ impl App {
                 let id = num("id");
                 if let Ok(Some(row)) = store::get(&self.db, id) {
                     let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
-                    self.engine.start(id, row.source_list(), row.final_path(), row.header_pairs(), row.hls);
+                    self.engine.start(id, row.source_list(), row.final_path(), row.header_pairs(), row.kind());
                 }
                 self.push_list();
                 reply(self, Ok(Value::Null));

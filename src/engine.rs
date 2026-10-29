@@ -11,7 +11,7 @@
 //! ponytail: equal split, add IDM-style "split the largest remaining segment when a connection goes idle" when the
 //! speed-up over a plain equal split is worth the extra bookkeeping.
 
-use crate::hls;
+use crate::{hls, ytdlp};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -48,6 +48,18 @@ pub mod state {
     pub const PAUSED: u8 = 2;
     pub const DONE: u8 = 3;
     pub const ERROR: u8 = 4;
+}
+
+/// What a download's URL is.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum Kind {
+    /// A file, fetched over several connections.
+    #[default]
+    File,
+    /// An HLS playlist from the video button, its segments joined into the file (`run_hls`).
+    Hls,
+    /// A video page (YouTube and the like) that yt-dlp reads, with the format picked in the video button (`run_page`).
+    Page { format: String },
 }
 
 /// What a probe of the URL found, before any bytes are taken.
@@ -277,8 +289,7 @@ pub struct Task {
     sources: Mutex<Vec<String>>,
     /// Referer, Cookie and User-Agent from the page, so a site that checks them serves the same file.
     headers: Vec<(String, String)>,
-    /// An HLS video: `url` is its playlist, and the segments are joined into the file (`run_hls`).
-    hls: bool,
+    kind: Kind,
     state: AtomicU8,
     downloaded: AtomicU64,
     total: AtomicU64,
@@ -354,8 +365,8 @@ impl Engine {
 
     /// Starts a fresh download, or picks up one left half-done from a sidecar beside `final_path`. `sources` is the
     /// mirror pool for net-merge, the primary first (a one-item list is an ordinary download). The headers are the
-    /// ones the browser carried, replayed on every connection. `hls` marks the URL as an HLS playlist.
-    pub fn start(self: &Arc<Self>, id: i64, sources: Vec<String>, final_path: PathBuf, headers: Vec<(String, String)>, hls: bool) {
+    /// ones the browser carried, replayed on every connection. `kind` says what the URL is.
+    pub fn start(self: &Arc<Self>, id: i64, sources: Vec<String>, final_path: PathBuf, headers: Vec<(String, String)>, kind: Kind) {
         let url = sources.first().cloned().unwrap_or_default();
         let resume = load_meta(&final_path).filter(|m| m.url == url);
         let task = Arc::new(Task {
@@ -364,7 +375,7 @@ impl Engine {
             final_path: final_path.clone(),
             sources: Mutex::new(sources),
             headers,
-            hls,
+            kind,
             state: AtomicU8::new(state::RUNNING),
             downloaded: AtomicU64::new(resume.as_ref().map(Meta::done).unwrap_or(0)),
             total: AtomicU64::new(resume.as_ref().and_then(|m| m.size).unwrap_or(0)),
@@ -421,8 +432,10 @@ impl Engine {
     /// The manager thread of one download: probe, open and size the part file, fan out one thread per segment,
     /// save progress while they run, then put the finished file in place.
     fn run(&self, task: Arc<Task>, resume: Option<Meta>) {
-        if task.hls {
-            return self.run_hls(&task);
+        match &task.kind {
+            Kind::Hls => return self.run_hls(&task),
+            Kind::Page { format } => return run_page(&task, format),
+            Kind::File => {}
         }
         let probe = match resume.as_ref() {
             // A resume trusts the sidecar; it checked the URL already, and re-probing could change the segments.
@@ -600,6 +613,32 @@ impl Engine {
                 task.state.store(state::DONE, Ordering::SeqCst);
             }
             Err(e) => task.set_error(format!("Không ghép được video: {e}")),
+        }
+    }
+}
+
+/// A video page through yt-dlp (src/ytdlp.rs), its pieces kept in the folder beside the file so a resume carries on.
+/// Its size stays the estimate the extension gave until the file is whole.
+fn run_page(task: &Task, format: &str) {
+    let folder = part_of(&task.final_path);
+    if let Err(e) = fs::create_dir_all(&folder) {
+        return task.set_error(format!("Không tạo được thư mục tạm: {e}"));
+    }
+    if let Ok(mut slot) = task.segments.lock() {
+        *slot = vec![Arc::new(AtomicU64::new(0))];
+    }
+    let progress = |done| task.downloaded.store(done, Ordering::Relaxed);
+    match ytdlp::download(&task.url, format, &task.final_path, &folder, progress, || task.paused_or_removed()) {
+        Ok(size) => {
+            task.total.store(size, Ordering::Relaxed);
+            task.downloaded.store(size, Ordering::Relaxed);
+            let _ = fs::remove_dir_all(&folder);
+            task.state.store(state::DONE, Ordering::SeqCst);
+        }
+        Err(e) => {
+            if !task.paused_or_removed() {
+                task.set_error(e);
+            }
         }
     }
 }
@@ -1069,7 +1108,7 @@ mod tests {
         let path = dir.join("video.ts");
         let engine = Arc::new(Engine::new());
         engine.set_connections(3);
-        engine.start(1, vec![format!("{base}/master.m3u8")], path.clone(), Vec::new(), true);
+        engine.start(1, vec![format!("{base}/master.m3u8")], path.clone(), Vec::new(), Kind::Hls);
         let snap = loop {
             let snap = engine.snapshots().into_iter().next().expect("the task is listed");
             match snap.state {
@@ -1104,7 +1143,7 @@ mod tests {
             assert_eq!(choices.ext, ext);
             let smallest = choices.variants.last().unwrap().url.clone();
             let path = dir.join(format!("{id}.{ext}"));
-            engine.start(id as i64, vec![smallest], path.clone(), Vec::new(), true);
+            engine.start(id as i64, vec![smallest], path.clone(), Vec::new(), Kind::Hls);
             loop {
                 let snap = engine.snapshots().into_iter().find(|s| s.id == id as i64).unwrap();
                 match snap.state {
@@ -1140,7 +1179,7 @@ mod tests {
 
         let engine = std::sync::Arc::new(Engine::new());
         engine.set_connections(8);
-        engine.start(1, vec![url.clone(), url], path.clone(), Vec::new(), false);
+        engine.start(1, vec![url.clone(), url], path.clone(), Vec::new(), Kind::File);
         loop {
             let snap = engine.snapshots().into_iter().next().expect("the task is listed");
             assert!(snap.sources >= 1);

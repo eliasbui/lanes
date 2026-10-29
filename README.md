@@ -41,8 +41,12 @@ bar, and is in English and Vietnamese.
 - **Video button.** Hover a video and a "Tải video" button with the Lanes mark appears under it, as in IDM (inside its bottom corner when the video reaches the bottom of the window); it lists what Lanes can download
   for that video by resolution (1080p, 720p, ...) with the size or an estimate. Whole video files go through the
   normal multi-connection engine; HLS streams (`.m3u8`) are fetched segment by segment in parallel, AES-128 included,
-  resumable, and joined into one `.ts` or `.mp4`. Not supported yet: YouTube and other DASH streams, live streams,
-  joining a separate audio track, and anything with DRM, which Lanes never touches.
+  resumable, and joined into one `.ts` or `.mp4`. YouTube, and pages where Lanes finds no stream of its own (DASH
+  sites), go through yt-dlp: the menu lists every resolution up to 2160p plus sound only, and the picked one is
+  downloaded and joined into an MP4. Not supported: live streams, and anything with DRM, which Lanes never touches.
+- **yt-dlp and ffmpeg** are needed for YouTube and the DASH sites; Lanes finds them where Homebrew or winget puts
+  them. Without ffmpeg only formats that carry their own sound are offered, which on YouTube is 360p. On macOS:
+  `brew install yt-dlp ffmpeg`. On Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno Gyan.FFmpeg`.
 - **net-merge (beta).** Paste several mirror URLs of one file and Lanes spreads the segments across them, merging
   their bandwidth. A mirror that disagrees on the size or allows no ranges is dropped, and each segment moves to the
   next mirror when one fails. (Lanes' net-merge is multi-source merging; it is unrelated to the NetMerge
@@ -107,6 +111,7 @@ Rust 1.85 or later.
   per segment with positioned writes, the resume sidecar, and retries.
 - `src/hls.rs` — HLS playlists: resolutions of a master, segments, keys and byte ranges of a media playlist, and
   AES-128 decryption.
+- `src/ytdlp.rs` — video pages through yt-dlp: the formats as menu choices, and the download with its progress.
 - `src/store.rs` — the list of downloads in SQLite.
 - `src/browser.rs` — the native-messaging host, the inbox the extension drops jobs into, and the extension the app
   carries.
