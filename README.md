@@ -44,9 +44,10 @@ bar, and is in English and Vietnamese.
   resumable, and joined into one `.ts` or `.mp4`. YouTube, and pages where Lanes finds no stream of its own (DASH
   sites), go through yt-dlp: the menu lists every resolution up to 2160p plus sound only, and the picked one is
   downloaded and joined into an MP4. Not supported: live streams, and anything with DRM, which Lanes never touches.
-- **yt-dlp and ffmpeg** are needed for YouTube and the DASH sites; Lanes finds them where Homebrew or winget puts
-  them. Without ffmpeg only formats that carry their own sound are offered, which on YouTube is 360p. On macOS:
-  `brew install yt-dlp ffmpeg`. On Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno Gyan.FFmpeg`.
+- **yt-dlp** is needed for YouTube and the DASH sites; Lanes finds it where Homebrew or winget puts it. On macOS:
+  `brew install yt-dlp`. On Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. The ffmpeg that joins a video to
+  its sound (720p to 4K) comes inside Lanes: a 4 MB LGPL build of FFmpeg that only joins streams, made by
+  `scripts/build-ffmpeg.sh` from the FFmpeg source.
 - **net-merge (beta).** Paste several mirror URLs of one file and Lanes spreads the segments across them, merging
   their bandwidth. A mirror that disagrees on the size or allows no ranges is dropped, and each segment moves to the
   next mirror when one fails. (Lanes' net-merge is multi-source merging; it is unrelated to the NetMerge

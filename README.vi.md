@@ -44,9 +44,10 @@ tiếng Việt.
   được khi dừng, rồi ghép thành một tệp `.ts` hoặc `.mp4`. YouTube và các trang Lanes không tự tìm ra luồng (trang
   DASH) đi qua yt-dlp: menu liệt kê mọi độ phân giải tới 2160p và bản chỉ âm thanh, bản được chọn tải về và ghép thành
   MP4. Không hỗ trợ: phát trực tiếp, và video có DRM (Lanes không bao giờ động tới).
-- **yt-dlp và ffmpeg** cần cho YouTube và các trang DASH; Lanes tự tìm ở chỗ Homebrew hoặc winget cài. Thiếu ffmpeg thì
-  chỉ có các bản sẵn tiếng, trên YouTube là 360p. macOS: `brew install yt-dlp ffmpeg`. Windows:
-  `winget install yt-dlp.yt-dlp DenoLand.Deno Gyan.FFmpeg`.
+- **yt-dlp** cần cho YouTube và các trang DASH; Lanes tự tìm ở chỗ Homebrew hoặc winget cài. macOS:
+  `brew install yt-dlp`. Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. ffmpeg để ghép hình với tiếng (720p
+  đến 4K) đã có sẵn trong Lanes: bản FFmpeg 4 MB giấy phép LGPL, chỉ ghép luồng, build từ mã nguồn FFmpeg bằng
+  `scripts/build-ffmpeg.sh`.
 - **net-merge (beta).** Dán nhiều liên kết mirror của cùng một file, Lanes chia các đoạn cho từng nguồn và gộp băng
   thông. Nguồn nào khác kích thước hoặc không cho tải theo đoạn sẽ bị bỏ; mỗi đoạn tự chuyển sang nguồn khác khi một
   nguồn lỗi. (net-merge của Lanes là gộp nhiều nguồn tải, không liên quan tới các công cụ NetMerge gộp đường mạng.)

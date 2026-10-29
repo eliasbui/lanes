@@ -9,13 +9,17 @@ cd "$ROOT"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP="dist/Lanes.app"
 
+# Each build carries the ffmpeg of its own processor (scripts/build-ffmpeg.sh).
 if [ "${UNIVERSAL:-}" = 1 ]; then
-    cargo build --release --target aarch64-apple-darwin
-    cargo build --release --target x86_64-apple-darwin
+    for TARGET in aarch64-apple-darwin x86_64-apple-darwin; do
+        FFMPEG=$(scripts/build-ffmpeg.sh "$TARGET")
+        LANES_FFMPEG=$FFMPEG cargo build --release --target "$TARGET"
+    done
     BIN=$(mktemp -d)/lanes
     lipo -create -output "$BIN" target/aarch64-apple-darwin/release/lanes target/x86_64-apple-darwin/release/lanes
 else
-    cargo build --release
+    FFMPEG=$(scripts/build-ffmpeg.sh "$(rustc -vV | sed -n 's/^host: //p')")
+    LANES_FFMPEG=$FFMPEG cargo build --release
     BIN=target/release/lanes
 fi
 

@@ -1,13 +1,15 @@
 //! Video pages whose player Lanes cannot read itself, YouTube first and the DASH sites after it, through yt-dlp: it
-//! lists a page's formats, and downloads the one picked, video and sound joined by ffmpeg. Both are the user's own
-//! installs (Homebrew, winget), looked for where those put them, since a browser or Finder starts the app with a bare
-//! PATH. Without ffmpeg only formats that carry their own sound are offered, which on YouTube is 360p.
-//! ponytail: user-installed tools; have the app fetch yt-dlp, deno and ffmpeg itself when asking users to install
-//! them proves too much.
+//! lists a page's formats, and downloads the one picked, video and sound joined by ffmpeg. yt-dlp is the user's own
+//! install (Homebrew, winget), looked for where those put it, since a browser or Finder starts the app with a bare
+//! PATH. ffmpeg comes with the app (scripts/build-ffmpeg.sh), the user's own only in a build made without it. Without
+//! ffmpeg only formats that carry their own sound are offered, which on YouTube is 360p.
+//! ponytail: user-installed yt-dlp and deno; have the app fetch them itself when asking users to install them proves
+//! too much.
 
 use serde::Serialize;
 use serde_json::Value;
 use std::{
+    fs,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -63,10 +65,46 @@ pub fn program(name: &str) -> Option<PathBuf> {
     folders().into_iter().map(|f| f.join(&file)).find(|p| p.is_file())
 }
 
-/// yt-dlp with the folders above on its PATH, where it finds deno, which YouTube's player now needs, and ffmpeg.
+/// The ffmpeg the app carries, empty in a build made without it.
+#[cfg(ffmpeg)]
+const FFMPEG: &[u8] = include_bytes!(env!("LANES_FFMPEG"));
+#[cfg(not(ffmpeg))]
+const FFMPEG: &[u8] = &[];
+
+/// ffmpeg: the one the app carries, put in the data folder, or else the user's own.
+fn ffmpeg() -> Option<PathBuf> {
+    let carried = crate::data_dir().join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
+    (!FFMPEG.is_empty() && put_program(&carried, FFMPEG)).then_some(carried).or_else(|| program("ffmpeg"))
+}
+
+/// Puts `bytes` at `path` as a program, unless they are there already, and says whether one is there. They are
+/// written beside it and renamed over it, so the app and the browser's host doing it at once never leave half a
+/// program. On Windows a copy in use cannot be replaced, and the one there still joins files.
+fn put_program(path: &Path, bytes: &[u8]) -> bool {
+    if fs::read(path).is_ok_and(|b| b == bytes) {
+        return true;
+    }
+    let part = path.with_extension(format!("{}.part", std::process::id()));
+    let written = fs::write(&part, bytes).and_then(|()| executable(&part)).and_then(|()| fs::rename(&part, path));
+    let _ = fs::remove_file(&part);
+    written.is_ok() || path.is_file()
+}
+
+#[cfg(unix)]
+fn executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+}
+
+#[cfg(not(unix))]
+fn executable(_: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// yt-dlp with the folders above on its PATH, where it finds deno, which YouTube's player now needs.
 fn yt_dlp() -> Result<Command, String> {
     let program = program("yt-dlp").ok_or_else(|| {
-        let tools = if cfg!(windows) { "yt-dlp.yt-dlp DenoLand.Deno Gyan.FFmpeg" } else { "yt-dlp ffmpeg" };
+        let tools = if cfg!(windows) { "yt-dlp.yt-dlp DenoLand.Deno" } else { "yt-dlp" };
         format!("Cần yt-dlp để tải video từ trang này. {}", install_hint(tools))
     })?;
     let mut command = Command::new(program);
@@ -96,7 +134,7 @@ pub fn formats(url: &str) -> Result<Formats, String> {
         return Err(error_of(&String::from_utf8_lossy(&out.stderr), "yt-dlp không đọc được trang này"));
     }
     let page: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("yt-dlp trả về dữ liệu lạ: {e}"))?;
-    let merge = program("ffmpeg").is_some();
+    let merge = ffmpeg().is_some();
     let choices = choices(&page, merge);
     if choices.is_empty() {
         return Err("Trang này không có video tải được".into());
@@ -203,7 +241,7 @@ pub fn download(url: &str, format: &str, final_path: &Path, temp: &Path, progres
     command.args(["--no-playlist", "--quiet", "--progress", "--newline", "--no-warnings", "--no-mtime", "-f", format]);
     command.args(["--progress-template", "download:lanes %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s"]);
     command.args(["--merge-output-format", "mp4"]);
-    if let Some(ffmpeg) = program("ffmpeg") {
+    if let Some(ffmpeg) = ffmpeg() {
         command.arg("--ffmpeg-location").arg(ffmpeg);
     }
     // The name is taken as written: `%` would start one of yt-dlp's template fields.
@@ -330,6 +368,21 @@ mod tests {
         assert!(choices.iter().all(|c| valid_format(&c.format)));
         assert!(!valid_format("18 --exec rm"), "nothing but format characters");
         assert!(!valid_format(""));
+    }
+
+    #[test]
+    fn the_carried_program_is_put_once_and_replaced_when_it_changes() {
+        let dir = std::env::temp_dir().join(format!("lanes-ffmpeg-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ffmpeg");
+        assert!(put_program(&path, b"one"));
+        assert_eq!(fs::read(&path).unwrap(), b"one");
+        #[cfg(unix)]
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&fs::metadata(&path).unwrap().permissions()) & 0o777, 0o755);
+        assert!(put_program(&path, b"two"), "a newer app's ffmpeg replaces the old one");
+        assert_eq!(fs::read(&path).unwrap(), b"two");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no part file is left behind");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

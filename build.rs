@@ -5,6 +5,14 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
     println!("cargo:rerun-if-changed=ui/parts");
     parts();
+    // The ffmpeg scripts/build-ffmpeg.sh made, carried inside the app when the build names it (src/ytdlp.rs).
+    println!("cargo:rustc-check-cfg=cfg(ffmpeg)");
+    println!("cargo:rerun-if-env-changed=LANES_FFMPEG");
+    if let Some(path) = env::var_os("LANES_FFMPEG") {
+        let path = fs::canonicalize(&path).expect("LANES_FFMPEG names the ffmpeg to carry");
+        println!("cargo:rustc-cfg=ffmpeg");
+        println!("cargo:rustc-env=LANES_FFMPEG={}", path.display());
+    }
     // The icon of the .exe on Windows; the other platforms take theirs from the bundle or the window. The target is
     // read from the environment, since cfg(windows) in a build script is the machine that builds, not the one built for.
     if env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows") && Path::new("assets/icon.ico").exists() {

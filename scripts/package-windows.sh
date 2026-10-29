@@ -23,7 +23,8 @@ PATH="$LLVM:$LLD:$PATH"
 
 # crt-static, because the bundled C of sqlite links the static C runtime; /ignore:4099 quiets the linker warnings
 # that Microsoft's CRT ships without PDB files.
-RUSTFLAGS="-C target-feature=+crt-static -C link-arg=/ignore:4099" \
+FFMPEG=$(scripts/build-ffmpeg.sh x86_64-pc-windows-msvc)
+LANES_FFMPEG=$FFMPEG RUSTFLAGS="-C target-feature=+crt-static -C link-arg=/ignore:4099" \
     cargo xwin build --release --locked --target x86_64-pc-windows-msvc
 OUT=${CARGO_TARGET_DIR:-target}/x86_64-pc-windows-msvc/release
 # Staged in a folder of its own, so the capitalised name is kept even on a case-insensitive Mac disk where
