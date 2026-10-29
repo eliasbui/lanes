@@ -53,7 +53,7 @@ tiếng Việt.
   `brew install yt-dlp`. Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. ffmpeg để ghép hình với tiếng (720p
   đến 4K) đã có sẵn trong Lanes: bản FFmpeg 4 MB giấy phép LGPL, chỉ ghép luồng, build từ mã nguồn FFmpeg bằng
   `scripts/build-ffmpeg.sh`.
-- **net-merge: mọi đường mạng cùng lúc.** Bật công tắc trong Cài đặt, các kết nối của một lượt tải được chia ra mọi
+- **net-merge (beta): mọi đường mạng cùng lúc.** Bật công tắc trong Cài đặt, các kết nối của một lượt tải được chia ra mọi
   đường mạng của máy (Wi-Fi, Ethernet, điện thoại cắm USB bật điểm truy cập), như
   [net-merge](https://github.com/net-merge/net-merge), nên một tệp được tải bằng tổng tốc độ của các đường: tệp thường
   theo từng đoạn, HLS theo từng phần, trang qua yt-dlp tám phần một lúc. Không cần quyền quản trị: chỉ kết nối của

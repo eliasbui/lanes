@@ -53,7 +53,7 @@ bar, and is in English and Vietnamese.
   `brew install yt-dlp`. On Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. The ffmpeg that joins a video to
   its sound (720p to 4K) comes inside Lanes: a 4 MB LGPL build of FFmpeg that only joins streams, made by
   `scripts/build-ffmpeg.sh` from the FFmpeg source.
-- **net-merge: every network link at once.** With the switch in Settings on, the connections of a download are spread
+- **net-merge (beta): every network link at once.** With the switch in Settings on, the connections of a download are spread
   over every network link of the computer (Wi-Fi, Ethernet, a phone on USB with its hotspot on), as
   [net-merge](https://github.com/net-merge/net-merge) does, so one file comes at the speeds of all of them added up:
   plain files range by range, HLS segment by segment, and yt-dlp pages eight pieces at a time. It needs no
