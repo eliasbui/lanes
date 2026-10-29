@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Lanes</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --accent: #0a84ff;
+        --accent-2: #32d0ff;
+        --radius: 18px;
+        --glass: rgba(255, 255, 255, 0.55);
+        --glass-strong: rgba(255, 255, 255, 0.72);
+        --stroke: rgba(255, 255, 255, 0.6);
+        --stroke-soft: rgba(0, 0, 0, 0.06);
+        --text: #10131a;
+        --muted: rgba(16, 19, 26, 0.55);
+        --track: rgba(10, 20, 40, 0.1);
+        --shadow: 0 10px 34px rgba(20, 30, 60, 0.14);
+        --field: rgba(255, 255, 255, 0.6);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --glass: rgba(34, 36, 44, 0.52);
+          --glass-strong: rgba(42, 44, 54, 0.66);
+          --stroke: rgba(255, 255, 255, 0.1);
+          --stroke-soft: rgba(255, 255, 255, 0.07);
+          --text: #f3f5fb;
+          --muted: rgba(243, 245, 251, 0.56);
+          --track: rgba(255, 255, 255, 0.12);
+          --shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+          --field: rgba(255, 255, 255, 0.08);
+        }
+      }
+
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+        color: var(--text);
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+        background: #e9eef6;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { background: #0b0d12; }
+      }
+      /* The liquid background: slow-moving colour blobs under everything. */
+      .aurora {
+        position: fixed;
+        inset: -30% -10% -10%;
+        z-index: -1;
+        filter: blur(70px) saturate(140%);
+        opacity: 0.9;
+        background:
+          radial-gradient(42% 42% at 18% 22%, #6db7ff 0%, transparent 60%),
+          radial-gradient(40% 40% at 82% 16%, #b58cff 0%, transparent 60%),
+          radial-gradient(46% 46% at 72% 82%, #4ad7ff 0%, transparent 62%),
+          radial-gradient(44% 44% at 24% 86%, #8affd0 0%, transparent 60%);
+        animation: drift 26s ease-in-out infinite alternate;
+      }
+      @media (prefers-color-scheme: dark) {
+        .aurora { opacity: 0.5; filter: blur(80px) saturate(130%); }
+      }
+      @keyframes drift {
+        0% { transform: translate3d(0, 0, 0) scale(1); }
+        50% { transform: translate3d(2%, -2%, 0) scale(1.08); }
+        100% { transform: translate3d(-2%, 1%, 0) scale(1.04); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .aurora { animation: none; }
+      }
+
+      .app { display: flex; flex-direction: column; height: 100%; }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 18px;
+      }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -0.2px; }
+      .brand .mark {
+        width: 30px; height: 30px; border-radius: 9px;
+        background: linear-gradient(160deg, #2b93ff, #0040dd);
+        display: grid; place-items: center;
+        box-shadow: 0 4px 12px rgba(10, 70, 200, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+        flex: none;
+      }
+      .brand .mark svg { width: 17px; height: 17px; }
+
+      .add {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 6px 6px 14px;
+        background: var(--field);
+        border: 1px solid var(--stroke);
+        border-radius: 999px;
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        box-shadow: var(--shadow);
+        max-width: 620px;
+      }
+      .add svg { width: 17px; height: 17px; color: var(--muted); flex: none; }
+      .add input {
+        flex: 1;
+        border: 0; background: transparent; outline: none;
+        font: inherit; color: var(--text); min-width: 0;
+      }
+      .add input::placeholder { color: var(--muted); }
+
+      .btn {
+        border: 0;
+        font: inherit;
+        font-weight: 600;
+        color: #fff;
+        background: linear-gradient(180deg, #2b93ff, var(--accent));
+        padding: 8px 16px;
+        border-radius: 999px;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(10, 100, 240, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+        transition: transform 0.12s ease, filter 0.12s ease;
+        white-space: nowrap;
+      }
+      .btn:hover { filter: brightness(1.05); }
+      .btn:active { transform: scale(0.97); }
+      .ghost {
+        width: 36px; height: 36px; flex: none;
+        display: grid; place-items: center;
+        border-radius: 50%;
+        background: var(--field);
+        border: 1px solid var(--stroke);
+        color: var(--text);
+        cursor: pointer;
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        transition: transform 0.12s ease, background 0.12s ease;
+      }
+      .ghost:hover { transform: translateY(-1px); }
+      .ghost svg { width: 18px; height: 18px; }
+
+      .scroll { flex: 1; overflow-y: auto; padding: 4px 18px 20px; }
+      .scroll::-webkit-scrollbar { width: 10px; }
+      .scroll::-webkit-scrollbar-thumb { background: var(--track); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
+
+      .list { display: flex; flex-direction: column; gap: 12px; max-width: 980px; margin: 0 auto; }
+
+      .card {
+        background: var(--glass);
+        border: 1px solid var(--stroke);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        backdrop-filter: blur(32px) saturate(180%);
+        -webkit-backdrop-filter: blur(32px) saturate(180%);
+        box-shadow: var(--shadow);
+        animation: rise 0.28s ease both;
+      }
+      @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+      .card .top { display: flex; align-items: flex-start; gap: 12px; }
+      .fileicon {
+        width: 38px; height: 38px; border-radius: 10px; flex: none;
+        display: grid; place-items: center;
+        background: linear-gradient(160deg, rgba(43, 147, 255, 0.22), rgba(0, 64, 221, 0.14));
+        color: var(--accent);
+        border: 1px solid var(--stroke-soft);
+      }
+      .fileicon svg { width: 19px; height: 19px; }
+      .meta { flex: 1; min-width: 0; }
+      .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .actions { display: flex; gap: 6px; flex: none; }
+      .act {
+        width: 32px; height: 32px; border-radius: 50%;
+        display: grid; place-items: center;
+        border: 1px solid var(--stroke-soft);
+        background: var(--field);
+        color: var(--text);
+        cursor: pointer;
+        transition: background 0.12s ease, transform 0.12s ease, color 0.12s ease;
+      }
+      .act:hover { transform: translateY(-1px); background: rgba(10, 132, 255, 0.14); color: var(--accent); }
+      .act svg { width: 16px; height: 16px; }
+      .act.danger:hover { background: rgba(255, 69, 58, 0.16); color: #ff453a; }
+
+      .bar { margin-top: 12px; height: 7px; border-radius: 6px; background: var(--track); overflow: hidden; position: relative; }
+      .fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); width: 0; transition: width 0.4s ease; position: relative; }
+      .fill.run::after {
+        content: ""; position: absolute; inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+        transform: translateX(-100%);
+        animation: shimmer 1.4s linear infinite;
+      }
+      @keyframes shimmer { to { transform: translateX(100%); } }
+      .fill.done { background: linear-gradient(90deg, #30d158, #34e85a); }
+      .fill.error { background: linear-gradient(90deg, #ff6961, #ff453a); }
+      .fill.paused { background: linear-gradient(90deg, #a7abb5, #c8ccd4); }
+
+      .pill { font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+      .pill.run { color: var(--accent); background: rgba(10, 132, 255, 0.14); }
+      .pill.done { color: #1ca64c; background: rgba(48, 209, 88, 0.16); }
+      .pill.error { color: #ff453a; background: rgba(255, 69, 58, 0.16); }
+      .pill.paused { color: var(--muted); background: var(--track); }
+
+      .empty {
+        text-align: center; color: var(--muted);
+        margin: 14vh auto 0; max-width: 360px;
+        display: flex; flex-direction: column; align-items: center; gap: 14px;
+      }
+      .empty .blob {
+        width: 76px; height: 76px; border-radius: 22px;
+        background: linear-gradient(160deg, #2b93ff, #0040dd);
+        display: grid; place-items: center;
+        box-shadow: 0 14px 34px rgba(10, 80, 220, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+      }
+      .empty .blob svg { width: 40px; height: 40px; }
+      .empty h2 { margin: 0; font-size: 17px; color: var(--text); }
+      .empty p { margin: 0; }
+
+      /* The settings sheet slides over the list as a frosted panel. */
+      .sheet-wrap { position: fixed; inset: 0; z-index: 10; display: none; }
+      .sheet-wrap.open { display: block; }
+      .scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.18); opacity: 0; transition: opacity 0.2s ease; }
+      .sheet-wrap.open .scrim { opacity: 1; }
+      .sheet {
+        position: absolute; top: 0; right: 0; bottom: 0; width: min(380px, 86vw);
+        background: var(--glass-strong);
+        border-left: 1px solid var(--stroke);
+        backdrop-filter: blur(40px) saturate(180%);
+        -webkit-backdrop-filter: blur(40px) saturate(180%);
+        box-shadow: -20px 0 50px rgba(20, 30, 60, 0.22);
+        transform: translateX(100%);
+        transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+        padding: 20px; overflow-y: auto;
+      }
+      .sheet-wrap.open .sheet { transform: none; }
+      .sheet h2 { margin: 2px 0 18px; font-size: 18px; }
+      .group { margin-bottom: 22px; }
+      .group > label { display: block; font-weight: 600; margin-bottom: 8px; }
+      .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+      .rowline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+      input[type="range"] { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 6px; background: var(--track); outline: none; }
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%;
+        background: #fff; border: 1px solid rgba(0, 0, 0, 0.12);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.26); cursor: pointer;
+      }
+      .folder { display: flex; gap: 8px; }
+      .folder input {
+        flex: 1; min-width: 0; font: inherit; color: var(--text);
+        background: var(--field); border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 10px; outline: none;
+      }
+      .mini { font: inherit; font-weight: 600; cursor: pointer; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--stroke); background: var(--field); color: var(--text); white-space: nowrap; }
+      .mini:hover { background: rgba(10, 132, 255, 0.12); }
+
+      .switch { position: relative; width: 46px; height: 28px; flex: none; }
+      .switch input { opacity: 0; width: 0; height: 0; }
+      .track2 { position: absolute; inset: 0; border-radius: 28px; background: var(--track); transition: 0.2s; cursor: pointer; }
+      .track2::before { content: ""; position: absolute; width: 24px; height: 24px; left: 2px; top: 2px; border-radius: 50%; background: #fff; transition: 0.2s; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+      .switch input:checked + .track2 { background: var(--accent); }
+      .switch input:checked + .track2::before { transform: translateX(18px); }
+
+      .version { color: var(--muted); font-size: 12.5px; }
+
+      /* The update banner floats at the bottom. */
+      .banner {
+        position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 140%);
+        z-index: 20; display: flex; align-items: center; gap: 12px;
+        background: var(--glass-strong);
+        border: 1px solid var(--stroke);
+        backdrop-filter: blur(34px) saturate(180%);
+        -webkit-backdrop-filter: blur(34px) saturate(180%);
+        border-radius: 16px; padding: 12px 14px; box-shadow: var(--shadow);
+        transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+        max-width: 92vw;
+      }
+      .banner.show { transform: translate(-50%, 0); }
+      .banner .txt { font-size: 13px; }
+      .banner .txt b { font-weight: 700; }
+
+      .toast {
+        position: fixed; left: 50%; top: 16px; transform: translate(-50%, -140%);
+        z-index: 30; background: #141820; color: #fff;
+        padding: 10px 16px; border-radius: 12px; font-weight: 600; font-size: 13px;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+        transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1); max-width: 90vw; text-align: center;
+      }
+      .toast.show { transform: translate(-50%, 0); }
+    </style>
+  </head>
+  <body>
+    <div class="aurora"></div>
+    <div class="app">
+      <header>
+        <div class="brand">
+          <span class="mark">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v11m0 0l-4.5-4.5M12 14l4.5-4.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>
+          </span>
+          Lanes
+        </div>
+        <form class="add" id="addForm">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M9 17H7A5 5 0 017 7h2m6 0h2a5 5 0 010 10h-2M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <input id="url" type="text" placeholder="Dán liên kết để tải xuống" autocomplete="off" spellcheck="false" />
+          <button class="btn" type="submit">Tải</button>
+        </form>
+        <button class="ghost" id="gear" title="Cài đặt">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.7 7.7 0 000-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 00-1.7-1l-.4-2.5h-4l-.4 2.5a7.6 7.6 0 00-1.7 1l-2.4-1-2 3.4L4.6 11a7.7 7.7 0 000 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.4 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
+      </header>
+
+      <div class="scroll">
+        <div class="list" id="list"></div>
+        <div class="empty" id="empty">
+          <span class="blob"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v11m0 0l-5-5m5 5l5-5" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 20h14" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg></span>
+          <h2>Chưa có gì tải</h2>
+          <p>Dán một liên kết ở trên, hoặc tải từ trình duyệt qua tiện ích Lanes.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet-wrap" id="sheetWrap">
+      <div class="scrim" id="scrim"></div>
+      <div class="sheet">
+        <h2>Cài đặt</h2>
+
+        <div class="group">
+          <div class="rowline"><label for="conns">Số kết nối mỗi tệp</label><b id="connsVal">8</b></div>
+          <input type="range" id="conns" min="1" max="32" step="1" />
+          <p class="hint">Nhiều kết nối tải nhanh hơn, nhưng vài máy chủ giới hạn số kết nối.</p>
+        </div>
+
+        <div class="group">
+          <label>Thư mục lưu</label>
+          <div class="folder">
+            <input id="folder" type="text" spellcheck="false" />
+            <button class="mini" id="chooseFolder">Chọn…</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="rowline">
+            <label for="autostart" style="margin:0">Mở cùng máy tính</label>
+            <span class="switch"><input type="checkbox" id="autostart" /><span class="track2"></span></span>
+          </div>
+          <p class="hint">Lanes chạy ẩn trong thanh trạng thái để tải theo hàng đợi.</p>
+        </div>
+
+        <div class="group">
+          <div class="rowline">
+            <span class="version">Phiên bản <span id="version">—</span></span>
+            <button class="mini" id="checkUpdate">Kiểm tra cập nhật</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="banner" id="banner">
+      <div class="txt" id="bannerTxt"></div>
+      <button class="btn" id="bannerBtn">Cập nhật</button>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+      "use strict";
+      const $ = (id) => document.getElementById(id);
+      const pending = new Map();
+      let seq = 1;
+
+      function call(cmd, args = {}) {
+        return new Promise((resolve, reject) => {
+          const id = seq++;
+          pending.set(id, { resolve, reject });
+          window.ipc.postMessage(JSON.stringify({ id, cmd, args }));
+        });
+      }
+
+      window.app = {
+        receive(msg) {
+          if (msg.id != null && pending.has(msg.id)) {
+            const { resolve, reject } = pending.get(msg.id);
+            pending.delete(msg.id);
+            msg.ok ? resolve(msg.data) : reject(msg.error);
+            return;
+          }
+          if (msg.event) events[msg.event]?.(msg.data);
+        },
+      };
+
+      // Download states, matching engine::state.
+      const QUEUED = 0, RUNNING = 1, PAUSED = 2, DONE = 3, ERROR = 4;
+      const label = { [QUEUED]: "Đang chờ", [RUNNING]: "Đang tải", [PAUSED]: "Tạm dừng", [DONE]: "Hoàn tất", [ERROR]: "Lỗi" };
+      const klass = { [RUNNING]: "run", [PAUSED]: "paused", [DONE]: "done", [ERROR]: "error", [QUEUED]: "run" };
+
+      function human(n) {
+        if (n == null) return "—";
+        const u = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0;
+        while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+        return (i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)) + " " + u[i];
+      }
+      function eta(sec) {
+        if (!isFinite(sec) || sec <= 0) return "";
+        if (sec < 60) return Math.round(sec) + " giây";
+        if (sec < 3600) return Math.round(sec / 60) + " phút";
+        return (sec / 3600).toFixed(1) + " giờ";
+      }
+
+      const ICONS = {
+        pause: '<path d="M8 6v12M16 6v12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+        resume: '<path d="M8 5l12 7-12 7V5z" fill="currentColor"/>',
+        open: '<path d="M5 12v6a1 1 0 001 1h12a1 1 0 001-1v-6M12 3v12m0 0l-4-4m4 4l4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+        folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>',
+        remove: '<path d="M6 7h12M9 7V5h6v2m-7 0l1 12h6l1-12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+        file: '<path d="M7 3h7l5 5v13H7V3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>',
+      };
+      const act = (name, title, kind = "") => `<button class="act ${kind}" data-act="${name}" title="${title}"><svg viewBox="0 0 24 24" fill="none">${ICONS[name]}</svg></button>`;
+
+      function render(items) {
+        $("empty").style.display = items.length ? "none" : "flex";
+        const list = $("list");
+        const seen = new Set();
+        for (const it of items) {
+          seen.add(it.id);
+          let card = document.querySelector(`[data-id="${it.id}"]`);
+          if (!card) {
+            card = document.createElement("div");
+            card.className = "card";
+            card.dataset.id = it.id;
+            list.prepend(card);
+          }
+          const pct = it.size ? Math.min(100, (it.downloaded / it.size) * 100) : it.state === DONE ? 100 : 0;
+          const k = klass[it.state] || "run";
+          let sub;
+          if (it.state === RUNNING) {
+            const left = it.size && it.speed ? eta((it.size - it.downloaded) / it.speed) : "";
+            sub = `${human(it.downloaded)} / ${human(it.size)} · ${human(it.speed)}/s${left ? " · còn " + left : ""} · ${it.connections} kết nối`;
+          } else if (it.state === ERROR) {
+            sub = it.error || "Tải thất bại";
+          } else if (it.state === DONE) {
+            sub = human(it.size);
+          } else {
+            sub = `${human(it.downloaded)} / ${human(it.size)}`;
+          }
+          const actions =
+            (it.state === RUNNING || it.state === QUEUED ? act("pause", "Tạm dừng") : "") +
+            (it.state === PAUSED || it.state === ERROR ? act("resume", "Tiếp tục") : "") +
+            (it.state === DONE ? act("open", "Mở tệp") : "") +
+            act("folder", "Mở thư mục") +
+            act("remove", "Xóa", "danger");
+          card.innerHTML = `
+            <div class="top">
+              <span class="fileicon"><svg viewBox="0 0 24 24" fill="none">${ICONS.file}</svg></span>
+              <div class="meta">
+                <div class="name" title="${esc(it.filename)}">${esc(it.filename)}</div>
+                <div class="sub">${esc(sub)}</div>
+              </div>
+              <span class="pill ${k}">${label[it.state]}</span>
+              <div class="actions">${actions}</div>
+            </div>
+            <div class="bar"><div class="fill ${k} ${it.state === RUNNING ? "run" : ""}" style="width:${pct}%"></div></div>`;
+        }
+        for (const card of [...list.children]) {
+          if (!seen.has(Number(card.dataset.id))) card.remove();
+        }
+      }
+
+      function esc(s) {
+        return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      }
+
+      $("list").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-act]");
+        if (!btn) return;
+        const id = Number(btn.closest("[data-id]").dataset.id);
+        const a = btn.dataset.act;
+        if (a === "remove") call("remove", { id, delete: false });
+        else call(a === "pause" ? "pause" : a === "resume" ? "resume" : a === "open" ? "open" : "reveal", { id });
+      });
+
+      $("addForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const url = $("url").value.trim();
+        if (url) {
+          call("add", { url });
+          $("url").value = "";
+        }
+      });
+
+      // Settings sheet.
+      const sheet = $("sheetWrap");
+      const openSheet = (on) => sheet.classList.toggle("open", on);
+      $("gear").addEventListener("click", () => openSheet(true));
+      $("scrim").addEventListener("click", () => openSheet(false));
+
+      $("conns").addEventListener("input", () => ($("connsVal").textContent = $("conns").value));
+      $("conns").addEventListener("change", () => call("set_connections", { connections: Number($("conns").value) }));
+      $("folder").addEventListener("change", () => call("set_folder", { path: $("folder").value.trim() }));
+      $("chooseFolder").addEventListener("click", async () => {
+        const path = await call("choose_folder").catch(() => null);
+        if (path) { $("folder").value = path; call("set_folder", { path }); }
+      });
+      $("autostart").addEventListener("change", () =>
+        call("set_autostart", { on: $("autostart").checked }).then((on) => ($("autostart").checked = !!on)).catch(() => {})
+      );
+      $("checkUpdate").addEventListener("click", () => { call("check_update"); toast("Đang kiểm tra bản mới…"); });
+
+      // Update banner.
+      $("bannerBtn").addEventListener("click", () => {
+        $("bannerBtn").textContent = "Đang tải…";
+        $("bannerBtn").disabled = true;
+        call("install_update");
+      });
+
+      let toastTimer;
+      function toast(text) {
+        $("toast").textContent = text;
+        $("toast").classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => $("toast").classList.remove("show"), 3200);
+      }
+
+      const events = {
+        hello(d) {
+          $("version").textContent = d.version;
+          $("conns").max = d.max_connections;
+          $("conns").value = d.settings.connections;
+          $("connsVal").textContent = d.settings.connections;
+          $("folder").value = d.settings.download_dir;
+          $("autostart").checked = d.autostart;
+        },
+        list: render,
+        toast,
+        update(d) {
+          $("bannerTxt").innerHTML = `Có bản <b>Lanes ${esc(d.latest)}</b>. Bạn đang dùng ${esc(d.current)}.`;
+          $("banner").classList.add("show");
+        },
+        update_progress(p) {
+          $("bannerBtn").textContent = `Đang tải ${p}%`;
+        },
+        update_ready() {
+          $("bannerTxt").textContent = "Đã tải xong bản mới. Khởi động lại để dùng.";
+          $("bannerBtn").textContent = "Khởi động lại";
+          $("bannerBtn").disabled = false;
+          $("bannerBtn").onclick = () => call("restart");
+        },
+      };
+
+      // Paste a link anywhere to fill the box.
+      document.addEventListener("paste", (e) => {
+        const text = e.clipboardData?.getData("text") || "";
+        if (/^https?:\/\//i.test(text.trim()) && document.activeElement !== $("url")) {
+          $("url").value = text.trim();
+          $("url").focus();
+        }
+      });
+
+      call("ready").catch(() => {});
+    </script>
+  </body>
+</html>
