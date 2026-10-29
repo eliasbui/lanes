@@ -5,441 +5,474 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Lanes</title>
     <style>
+      /* macOS colours: the system's own where WebKit names them (the user's accent), Apple's values elsewhere. */
       :root {
         color-scheme: light dark;
-        --accent: #0a84ff;
-        --accent-2: #32d0ff;
-        --radius: 18px;
-        --glass: rgba(255, 255, 255, 0.55);
-        --glass-strong: rgba(255, 255, 255, 0.72);
-        --stroke: rgba(255, 255, 255, 0.6);
-        --stroke-soft: rgba(0, 0, 0, 0.06);
-        --text: #10131a;
-        --muted: rgba(16, 19, 26, 0.55);
-        --track: rgba(10, 20, 40, 0.1);
-        --shadow: 0 10px 34px rgba(20, 30, 60, 0.14);
-        --field: rgba(255, 255, 255, 0.6);
+        --accent: #007aff;
+        --window: #ffffff;
+        --sidebar: rgba(242, 242, 245, 0.94);
+        --sidebar-stroke: rgba(0, 0, 0, 0.07);
+        --label: rgba(0, 0, 0, 0.88);
+        --secondary: rgba(0, 0, 0, 0.52);
+        --tertiary: rgba(0, 0, 0, 0.28);
+        --separator: rgba(0, 0, 0, 0.08);
+        --hover: rgba(0, 0, 0, 0.05);
+        --pressed: rgba(0, 0, 0, 0.1);
+        --selected: rgba(0, 0, 0, 0.07);
+        --glass: rgba(255, 255, 255, 0.78);
+        --glass-stroke: rgba(0, 0, 0, 0.08);
+        --field: rgba(0, 0, 0, 0.045);
+        --field-stroke: rgba(0, 0, 0, 0.12);
+        --field-bg: #ffffff;
+        --btn: #ffffff;
+        --btn-stroke: rgba(0, 0, 0, 0.13);
+        --panel: #f5f5f7;
+        --panel-stroke: rgba(0, 0, 0, 0.1);
+        --group: #ffffff;
+        --group-stroke: rgba(0, 0, 0, 0.06);
+        --track: rgba(0, 0, 0, 0.1);
+        --menu: rgba(246, 246, 246, 0.88);
+        --red: #ff3b30;
+        --green: #28cd41;
+        --shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+      }
+      @supports (color: -apple-system-control-accent) {
+        :root { --accent: -apple-system-control-accent; }
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --glass: rgba(34, 36, 44, 0.52);
-          --glass-strong: rgba(42, 44, 54, 0.66);
-          --stroke: rgba(255, 255, 255, 0.1);
-          --stroke-soft: rgba(255, 255, 255, 0.07);
-          --text: #f3f5fb;
-          --muted: rgba(243, 245, 251, 0.56);
-          --track: rgba(255, 255, 255, 0.12);
-          --shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+          --window: #1e1e1e;
+          --sidebar: rgba(46, 46, 48, 0.94);
+          --sidebar-stroke: rgba(255, 255, 255, 0.07);
+          --label: rgba(255, 255, 255, 0.9);
+          --secondary: rgba(255, 255, 255, 0.55);
+          --tertiary: rgba(255, 255, 255, 0.28);
+          --separator: rgba(255, 255, 255, 0.08);
+          --hover: rgba(255, 255, 255, 0.06);
+          --pressed: rgba(255, 255, 255, 0.12);
+          --selected: rgba(255, 255, 255, 0.1);
+          --glass: rgba(58, 58, 60, 0.8);
+          --glass-stroke: rgba(255, 255, 255, 0.09);
           --field: rgba(255, 255, 255, 0.08);
+          --field-stroke: rgba(255, 255, 255, 0.1);
+          --field-bg: rgba(255, 255, 255, 0.06);
+          --btn: rgba(255, 255, 255, 0.13);
+          --btn-stroke: rgba(255, 255, 255, 0.06);
+          --panel: #2a2a2c;
+          --panel-stroke: rgba(255, 255, 255, 0.1);
+          --group: rgba(255, 255, 255, 0.05);
+          --group-stroke: rgba(255, 255, 255, 0.05);
+          --track: rgba(255, 255, 255, 0.14);
+          --menu: rgba(42, 42, 44, 0.88);
+          --red: #ff453a;
+          --green: #32d74b;
+          --shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
         }
       }
 
       * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
       html, body { height: 100%; margin: 0; }
       body {
-        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-        color: var(--text);
+        font: 13px/1.38 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        color: var(--label);
+        background: var(--window);
         overflow: hidden;
+        cursor: default;
+        -webkit-user-select: none;
+        user-select: none;
         -webkit-font-smoothing: antialiased;
-        background: #e9eef6;
       }
-      @media (prefers-color-scheme: dark) {
-        body { background: #0b0d12; }
-      }
-      /* The liquid background: slow-moving colour blobs under everything. */
-      .aurora {
-        position: fixed;
-        inset: -30% -10% -10%;
-        z-index: -1;
-        filter: blur(70px) saturate(140%);
-        opacity: 0.9;
-        background:
-          radial-gradient(42% 42% at 18% 22%, #6db7ff 0%, transparent 60%),
-          radial-gradient(40% 40% at 82% 16%, #b58cff 0%, transparent 60%),
-          radial-gradient(46% 46% at 72% 82%, #4ad7ff 0%, transparent 62%),
-          radial-gradient(44% 44% at 24% 86%, #8affd0 0%, transparent 60%);
-        animation: drift 26s ease-in-out infinite alternate;
-      }
-      @media (prefers-color-scheme: dark) {
-        .aurora { opacity: 0.5; filter: blur(80px) saturate(130%); }
-      }
-      @keyframes drift {
-        0% { transform: translate3d(0, 0, 0) scale(1); }
-        50% { transform: translate3d(2%, -2%, 0) scale(1.08); }
-        100% { transform: translate3d(-2%, 1%, 0) scale(1.04); }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .aurora { animation: none; }
-      }
+      input, textarea { -webkit-user-select: text; user-select: text; }
+      button { font: inherit; color: inherit; cursor: default; }
+      svg { display: block; }
+      :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px; }
+      /* macOS draws its own overlay scrollbars; elsewhere a thin one in the same spirit. */
+      html:not(.mac) ::-webkit-scrollbar { width: 10px; }
+      html:not(.mac) ::-webkit-scrollbar-thumb { background: var(--track); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
 
-      .app { display: flex; flex-direction: column; height: 100%; }
+      .app { display: grid; grid-template-columns: 228px minmax(0, 1fr); height: 100%; }
 
-      header {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 16px 18px;
+      /* The sidebar floats inset in the window, as on macOS 26, and holds the window's buttons at its top. */
+      .sidebar {
+        margin: 8px 0 8px 8px;
+        border-radius: 18px;
+        background: var(--sidebar);
+        box-shadow: 0 0 0 0.5px var(--sidebar-stroke), 0 2px 10px rgba(0, 0, 0, 0.06);
+        display: flex; flex-direction: column; min-height: 0; overflow: hidden;
       }
-      .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -0.2px; }
-      .brand .mark {
-        width: 30px; height: 30px; border-radius: 9px;
-        background: linear-gradient(160deg, #2b93ff, #0040dd);
-        display: grid; place-items: center;
-        box-shadow: 0 4px 12px rgba(10, 70, 200, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5);
-        flex: none;
+      .side-top { height: 10px; flex: none; }
+      .mac .side-top { height: 44px; }
+      nav { flex: 1; overflow-y: auto; padding: 0 10px 10px; }
+      .section { font-size: 11px; font-weight: 600; color: var(--secondary); padding: 12px 8px 4px; }
+      .nav-item {
+        display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px;
+        border: 0; border-radius: 8px; background: transparent; text-align: left;
       }
-      .brand .mark svg { width: 17px; height: 17px; }
+      .nav-item:hover { background: var(--hover); }
+      .nav-item.on { background: var(--selected); }
+      .nav-item svg { width: 16px; height: 16px; color: var(--accent); flex: none; }
+      .nav-item .count { margin-left: auto; color: var(--secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 
-      .add {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 6px 6px 14px;
-        background: var(--field);
-        border: 1px solid var(--stroke);
-        border-radius: 999px;
-        backdrop-filter: blur(24px) saturate(180%);
-        -webkit-backdrop-filter: blur(24px) saturate(180%);
-        box-shadow: var(--shadow);
-        max-width: 620px;
-      }
-      .add svg { width: 17px; height: 17px; color: var(--muted); flex: none; }
-      .add input {
-        flex: 1;
-        border: 0; background: transparent; outline: none;
-        font: inherit; color: var(--text); min-width: 0;
-      }
-      .add input::placeholder { color: var(--muted); }
+      main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
-      .btn {
-        border: 0;
-        font: inherit;
-        font-weight: 600;
-        color: #fff;
-        background: linear-gradient(180deg, #2b93ff, var(--accent));
-        padding: 8px 16px;
-        border-radius: 999px;
-        cursor: pointer;
-        box-shadow: 0 4px 12px rgba(10, 100, 240, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.4);
-        transition: transform 0.12s ease, filter 0.12s ease;
-        white-space: nowrap;
+      .toolbar { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 20px; }
+      .titles { min-width: 0; display: flex; flex-direction: column; }
+      .titles h1 { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .titles span { font-size: 11px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+      .spacer { flex: 1; }
+      .capsule {
+        display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 3px; flex: none;
+        border-radius: 999px; background: var(--glass); box-shadow: 0 0 0 0.5px var(--glass-stroke), var(--shadow);
+        -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
       }
-      .btn:hover { filter: brightness(1.05); }
-      .btn:active { transform: scale(0.97); }
-      .ghost {
-        width: 36px; height: 36px; flex: none;
-        display: grid; place-items: center;
-        border-radius: 50%;
-        background: var(--field);
-        border: 1px solid var(--stroke);
-        color: var(--text);
-        cursor: pointer;
-        backdrop-filter: blur(24px) saturate(180%);
-        -webkit-backdrop-filter: blur(24px) saturate(180%);
-        transition: transform 0.12s ease, background 0.12s ease;
+      .tb {
+        height: 28px; min-width: 32px; padding: 0 7px; border: 0; border-radius: 999px; background: transparent;
+        display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--label);
       }
-      .ghost:hover { transform: translateY(-1px); }
-      .ghost svg { width: 18px; height: 18px; }
+      .tb:hover { background: var(--hover); }
+      .tb:active { background: var(--pressed); }
+      .tb:disabled { opacity: 0.35; background: transparent; }
+      .tb svg { width: 17px; height: 17px; }
+      .search { width: 210px; height: 34px; padding: 0 12px; gap: 6px; }
+      .search svg { width: 15px; height: 15px; color: var(--secondary); flex: none; }
+      .search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: inherit; color: var(--label); }
+      .search input::placeholder { color: var(--secondary); }
+      @media (max-width: 760px) { .search { width: 140px; } }
 
-      /* The net-merge toggle sits inside the add pill; it glows when the panel is open. */
-      .merge-toggle { width: 30px; height: 30px; box-shadow: none; border: 0; background: transparent; }
-      .merge-toggle svg { width: 19px; height: 19px; }
-      .merge-toggle.on { background: rgba(10, 132, 255, 0.16); color: var(--accent); }
+      .scroll { flex: 1; overflow-y: auto; padding: 2px 12px 12px; }
 
-      .merge-panel { max-height: 0; overflow: hidden; transition: max-height 0.28s cubic-bezier(0.32, 0.72, 0, 1); padding: 0 18px; }
-      .merge-panel.open { max-height: 260px; }
-      .merge-card {
-        max-width: 620px; margin: 2px 0 10px;
-        background: var(--glass); border: 1px solid var(--stroke); border-radius: var(--radius);
-        backdrop-filter: blur(32px) saturate(180%); -webkit-backdrop-filter: blur(32px) saturate(180%);
-        box-shadow: var(--shadow); padding: 14px 16px;
+      /* The list, rows as in Finder: a file's icon, its name and progress, and its buttons. */
+      .row {
+        position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+        padding: 9px 10px; border-radius: 10px;
       }
-      .merge-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-      .merge-head b { font-size: 14px; }
-      .beta { font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #fff; background: linear-gradient(180deg, #ff9f0a, #ff8a00); padding: 2px 7px; border-radius: 999px; }
-      .merge-note { color: var(--muted); font-size: 12.5px; }
-      #mergeUrls {
-        width: 100%; margin-top: 10px; resize: vertical; min-height: 64px;
-        font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text);
-        background: var(--field); border: 1px solid var(--stroke); border-radius: 12px; padding: 10px 12px; outline: none;
+      .row:not(:first-child)::before { content: ""; position: absolute; top: 0; left: 54px; right: 10px; height: 1px; background: var(--separator); transform: scaleY(0.5); }
+      .row.sel::before, .row.sel + .row::before { display: none; }
+      .row.sel { background: var(--accent); color: #fff; }
+      .inactive .row.sel { background: var(--selected); color: var(--label); }
+      .icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: #fff; }
+      .icon svg { width: 17px; height: 17px; }
+      .icon.Video { background: linear-gradient(180deg, #bf5af2, #8e44d6); }
+      .icon.Music { background: linear-gradient(180deg, #ff6482, #ff2d55); }
+      .icon.Documents { background: linear-gradient(180deg, #4ea8ff, #0a6cff); }
+      .icon.Compressed { background: linear-gradient(180deg, #c4a37e, #9a7a55); }
+      .icon.Programs { background: linear-gradient(180deg, #5ee27a, #23b14a); }
+      .icon.other { background: linear-gradient(180deg, #a5a5ab, #7c7c82); }
+      .meta { min-width: 0; }
+      .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tag { font-size: 10px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 1px 6px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; }
+      .sub { font-size: 11px; color: var(--secondary); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+      .sub.err { color: var(--red); }
+      .row.sel .sub, .row.sel .sub.err { color: rgba(255, 255, 255, 0.82); }
+      .row.sel .tag { color: #fff; background: rgba(255, 255, 255, 0.22); }
+      .inactive .row.sel .sub { color: var(--secondary); }
+      .bar { height: 4px; border-radius: 2px; background: var(--track); margin-top: 6px; overflow: hidden; }
+      .fill { height: 100%; border-radius: 2px; background: var(--accent); transition: width 0.4s ease; }
+      .fill.paused { background: var(--tertiary); }
+      .fill.error { background: var(--red); }
+      .row.sel .bar { background: rgba(255, 255, 255, 0.3); }
+      .row.sel .fill { background: #fff; }
+      .right { display: flex; align-items: center; gap: 2px; }
+      .act { width: 26px; height: 26px; border: 0; border-radius: 50%; background: transparent; color: var(--secondary); display: grid; place-items: center; }
+      .act:hover { background: var(--hover); color: var(--label); }
+      .act:active { background: var(--pressed); }
+      .act svg { width: 15px; height: 15px; }
+      .act.rm { opacity: 0; }
+      .row:hover .act.rm, .row.sel .act.rm { opacity: 1; }
+      .row.sel .act { color: #fff; }
+      .row.sel .act:hover { background: rgba(255, 255, 255, 0.18); }
+
+      .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 0 24px 40px; }
+      .empty svg { width: 54px; height: 54px; color: var(--tertiary); margin-bottom: 4px; }
+      .empty h2 { margin: 0; font-size: 15px; font-weight: 600; }
+      .empty p { margin: 0 0 8px; color: var(--secondary); max-width: 340px; }
+
+      /* Buttons and fields as macOS draws them. */
+      .push {
+        height: 28px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--btn); color: var(--label);
+        font-weight: 500; white-space: nowrap; box-shadow: 0 0 0 0.5px var(--btn-stroke), 0 0.5px 1.5px rgba(0, 0, 0, 0.1);
       }
-      #mergeUrls::placeholder { color: var(--muted); }
-      .merge-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
-      .merge-hint { color: var(--muted); font-size: 12px; }
-      .badge-merge { font-size: 11px; font-weight: 700; color: var(--accent); background: rgba(10, 132, 255, 0.14); padding: 1px 7px; border-radius: 999px; margin-left: 6px; }
-
-      .scroll { flex: 1; overflow-y: auto; padding: 4px 18px 20px; }
-      .scroll::-webkit-scrollbar { width: 10px; }
-      .scroll::-webkit-scrollbar-thumb { background: var(--track); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
-
-      .list { display: flex; flex-direction: column; gap: 12px; max-width: 980px; margin: 0 auto; }
-
-      .card {
-        background: var(--glass);
-        border: 1px solid var(--stroke);
-        border-radius: var(--radius);
-        padding: 14px 16px;
-        backdrop-filter: blur(32px) saturate(180%);
-        -webkit-backdrop-filter: blur(32px) saturate(180%);
-        box-shadow: var(--shadow);
-        animation: rise 0.28s ease both;
+      .push:active { filter: brightness(0.94); }
+      .push.primary { background: var(--accent); color: #fff; box-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.15); }
+      .push:disabled { opacity: 0.5; }
+      .push.small { height: 24px; padding: 0 11px; font-size: 12px; }
+      .field {
+        height: 28px; padding: 0 10px; border: 0; border-radius: 8px; outline: none; background: var(--field-bg); color: var(--label);
+        font: inherit; box-shadow: 0 0 0 0.5px var(--field-stroke), inset 0 0.5px 1px rgba(0, 0, 0, 0.05); min-width: 0;
       }
-      @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+      .field:focus { box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+      .field::placeholder { color: var(--tertiary); }
+      textarea.field { height: auto; padding: 8px 10px; resize: vertical; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+      .wide { width: 100%; }
+      .beta { font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; color: #fff; background: #ff9500; padding: 1px 6px; border-radius: 999px; vertical-align: 1px; }
 
-      .card .top { display: flex; align-items: flex-start; gap: 12px; }
-      .fileicon {
-        width: 38px; height: 38px; border-radius: 10px; flex: none;
-        display: grid; place-items: center;
-        background: linear-gradient(160deg, rgba(43, 147, 255, 0.22), rgba(0, 64, 221, 0.14));
-        color: var(--accent);
-        border: 1px solid var(--stroke-soft);
+      .switch { position: relative; width: 38px; height: 22px; flex: none; }
+      .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+      .knob { position: absolute; inset: 0; border-radius: 11px; background: var(--track); transition: background 0.2s ease; }
+      .knob::before {
+        content: ""; position: absolute; width: 20px; height: 20px; left: 1px; top: 1px; border-radius: 50%; background: #fff;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.25); transition: transform 0.2s cubic-bezier(0.3, 0.7, 0.4, 1);
       }
-      .fileicon svg { width: 19px; height: 19px; }
-      .meta { flex: 1; min-width: 0; }
-      .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .actions { display: flex; gap: 6px; flex: none; }
-      .act {
-        width: 32px; height: 32px; border-radius: 50%;
-        display: grid; place-items: center;
-        border: 1px solid var(--stroke-soft);
-        background: var(--field);
-        color: var(--text);
-        cursor: pointer;
-        transition: background 0.12s ease, transform 0.12s ease, color 0.12s ease;
-      }
-      .act:hover { transform: translateY(-1px); background: rgba(10, 132, 255, 0.14); color: var(--accent); }
-      .act svg { width: 16px; height: 16px; }
-      .act.danger:hover { background: rgba(255, 69, 58, 0.16); color: #ff453a; }
+      .switch input:checked + .knob { background: var(--accent); }
+      .switch input:checked + .knob::before { transform: translateX(16px); }
+      .switch input:focus-visible + .knob { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px; }
 
-      .bar { margin-top: 12px; height: 7px; border-radius: 6px; background: var(--track); overflow: hidden; position: relative; }
-      .fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); width: 0; transition: width 0.4s ease; position: relative; }
-      .fill.run::after {
-        content: ""; position: absolute; inset: 0;
-        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
-        transform: translateX(-100%);
-        animation: shimmer 1.4s linear infinite;
+      input[type="range"] {
+        -webkit-appearance: none; appearance: none; width: 160px; height: 4px; border-radius: 2px; outline: none;
+        background: linear-gradient(to right, var(--accent) var(--p, 0%), var(--track) var(--p, 0%));
       }
-      @keyframes shimmer { to { transform: translateX(100%); } }
-      .fill.done { background: linear-gradient(90deg, #30d158, #34e85a); }
-      .fill.error { background: linear-gradient(90deg, #ff6961, #ff453a); }
-      .fill.paused { background: linear-gradient(90deg, #a7abb5, #c8ccd4); }
-
-      .pill { font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
-      .pill.run { color: var(--accent); background: rgba(10, 132, 255, 0.14); }
-      .pill.done { color: #1ca64c; background: rgba(48, 209, 88, 0.16); }
-      .pill.error { color: #ff453a; background: rgba(255, 69, 58, 0.16); }
-      .pill.paused { color: var(--muted); background: var(--track); }
-
-      .empty {
-        text-align: center; color: var(--muted);
-        margin: 14vh auto 0; max-width: 360px;
-        display: flex; flex-direction: column; align-items: center; gap: 14px;
-      }
-      .empty .blob {
-        width: 76px; height: 76px; border-radius: 22px;
-        background: linear-gradient(160deg, #2b93ff, #0040dd);
-        display: grid; place-items: center;
-        box-shadow: 0 14px 34px rgba(10, 80, 220, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5);
-      }
-      .empty .blob svg { width: 40px; height: 40px; }
-      .empty h2 { margin: 0; font-size: 17px; color: var(--text); }
-      .empty p { margin: 0; }
-
-      /* The settings sheet slides over the list as a frosted panel. */
-      .sheet-wrap { position: fixed; inset: 0; z-index: 10; display: none; }
-      .sheet-wrap.open { display: block; }
-      .scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.18); opacity: 0; transition: opacity 0.2s ease; }
-      .sheet-wrap.open .scrim { opacity: 1; }
-      .sheet {
-        position: absolute; top: 0; right: 0; bottom: 0; width: min(380px, 86vw);
-        background: var(--glass-strong);
-        border-left: 1px solid var(--stroke);
-        backdrop-filter: blur(40px) saturate(180%);
-        -webkit-backdrop-filter: blur(40px) saturate(180%);
-        box-shadow: -20px 0 50px rgba(20, 30, 60, 0.22);
-        transform: translateX(100%);
-        transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
-        padding: 20px; overflow-y: auto;
-      }
-      .sheet-wrap.open .sheet { transform: none; }
-      .sheet h2 { margin: 2px 0 18px; font-size: 18px; }
-      .group { margin-bottom: 22px; }
-      .group > label { display: block; font-weight: 600; margin-bottom: 8px; }
-      .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
-      .rowline { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-
-      input[type="range"] { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 6px; background: var(--track); outline: none; }
       input[type="range"]::-webkit-slider-thumb {
-        -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%;
-        background: #fff; border: 1px solid rgba(0, 0, 0, 0.12);
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.26); cursor: pointer;
+        -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.28);
       }
-      .folder { display: flex; gap: 8px; }
-      .folder input {
-        flex: 1; min-width: 0; font: inherit; color: var(--text);
-        background: var(--field); border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 10px; outline: none;
+
+      .segmented { display: flex; padding: 2px; border-radius: 999px; background: var(--field); margin-bottom: 12px; }
+      .seg { flex: 1; height: 24px; border: 0; border-radius: 999px; background: transparent; font-weight: 500; }
+      .seg.on { background: var(--btn); box-shadow: 0 0 0 0.5px var(--btn-stroke), 0 1px 2px rgba(0, 0, 0, 0.12); }
+
+      /* Sheets come down from the top of the window, over a dimmed one. */
+      .modal { position: fixed; inset: 0; z-index: 20; display: none; justify-content: center; align-items: flex-start; padding: 56px 16px 16px; background: rgba(0, 0, 0, 0.14); }
+      .modal.open { display: flex; }
+      .panel {
+        width: min(480px, 100%); max-height: 100%; overflow-y: auto; padding: 20px; border-radius: 22px; background: var(--panel);
+        box-shadow: 0 0 0 0.5px var(--panel-stroke), 0 22px 70px rgba(0, 0, 0, 0.3);
+        animation: sheet 0.24s cubic-bezier(0.32, 0.72, 0, 1);
       }
-      .mini { font: inherit; font-weight: 600; cursor: pointer; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--stroke); background: var(--field); color: var(--text); white-space: nowrap; }
-      .mini:hover { background: rgba(10, 132, 255, 0.12); }
+      .panel.wide-panel { width: min(580px, 100%); padding: 0; }
+      @keyframes sheet { from { transform: translateY(-14px) scale(0.98); opacity: 0; } }
+      .panel h2 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+      .lead { margin: 0 0 14px; color: var(--secondary); }
+      .hint { margin: 8px 0 0; color: var(--secondary); font-size: 11.5px; }
+      .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
-      .switch { position: relative; width: 46px; height: 28px; flex: none; }
-      .switch input { opacity: 0; width: 0; height: 0; }
-      .track2 { position: absolute; inset: 0; border-radius: 28px; background: var(--track); transition: 0.2s; cursor: pointer; }
-      .track2::before { content: ""; position: absolute; width: 24px; height: 24px; left: 2px; top: 2px; border-radius: 50%; background: #fff; transition: 0.2s; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
-      .switch input:checked + .track2 { background: var(--accent); }
-      .switch input:checked + .track2::before { transform: translateX(18px); }
+      /* Settings, grouped rows as in System Settings. */
+      .panel-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 12px 20px; background: var(--panel); border-bottom: 1px solid var(--separator); }
+      .panel-head h2 { margin: 0; }
+      .panel-body { padding: 4px 20px 20px; }
+      .group-title { font-size: 12px; font-weight: 600; color: var(--secondary); margin: 16px 4px 6px; }
+      .group { background: var(--group); border-radius: 12px; box-shadow: 0 0 0 0.5px var(--group-stroke); }
+      .item { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; min-height: 42px; }
+      .item + .item::before { content: ""; position: absolute; top: 0; left: 14px; right: 0; height: 1px; background: var(--separator); transform: scaleY(0.5); }
+      .item .label { flex: 1; min-width: 0; }
+      .item .label small { display: block; margin-top: 2px; font-size: 11px; line-height: 1.4; color: var(--secondary); }
+      .item .control { flex: none; display: flex; align-items: center; gap: 8px; }
+      .item.stack { flex-direction: column; align-items: stretch; gap: 8px; }
+      .item.stack .control { flex: 1; }
+      .item.stack .control .field { flex: 1; }
+      .value { min-width: 20px; text-align: right; font-variant-numeric: tabular-nums; color: var(--secondary); }
+      select { font: inherit; color: var(--label); min-width: 150px; max-width: 200px; }
+      input[type="time"].field { width: 96px; font-variant-numeric: tabular-nums; }
 
-      .version { color: var(--muted); font-size: 12.5px; }
-
-      /* net-merge: the links and what each carries. */
-      .nets { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+      .nets { display: flex; flex-direction: column; gap: 4px; }
       .nets:empty { display: none; }
-      .net { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-radius: 10px; background: var(--field); border: 1px solid var(--stroke); font-size: 13px; }
+      .net { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border-radius: 8px; background: var(--field); font-size: 12px; }
       .net-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .net-state { flex: none; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-      .net-state.up { color: #1ca64c; }
-      .net-state.down { color: #ff453a; }
+      .net-state { flex: none; color: var(--secondary); font-variant-numeric: tabular-nums; }
+      .net-state.up { color: var(--green); }
+      .net-state.down { color: var(--red); }
 
-      /* The update banner floats at the bottom. */
+      /* The right-click menu, as macOS draws one. */
+      .ctx {
+        position: fixed; z-index: 40; min-width: 210px; padding: 5px; border-radius: 12px; display: none;
+        background: var(--menu); box-shadow: 0 0 0 0.5px var(--panel-stroke), 0 10px 34px rgba(0, 0, 0, 0.22);
+        -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
+      }
+      .ctx.open { display: block; }
+      .ctx button { display: block; width: 100%; height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; text-align: left; }
+      .ctx button:hover { background: var(--accent); color: #fff; }
+      .ctx hr { height: 1px; margin: 5px 10px; border: 0; background: var(--separator); }
+
       .banner {
-        position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 140%);
-        z-index: 20; display: flex; align-items: center; gap: 12px;
-        background: var(--glass-strong);
-        border: 1px solid var(--stroke);
-        backdrop-filter: blur(34px) saturate(180%);
-        -webkit-backdrop-filter: blur(34px) saturate(180%);
-        border-radius: 16px; padding: 12px 14px; box-shadow: var(--shadow);
-        transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
-        max-width: 92vw;
+        position: fixed; left: 50%; bottom: 16px; z-index: 30; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px);
+        padding: 8px 8px 8px 16px; border-radius: 999px; background: var(--glass); box-shadow: 0 0 0 0.5px var(--glass-stroke), 0 10px 30px rgba(0, 0, 0, 0.18);
+        -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+        transform: translate(-50%, 160%); transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
       }
       .banner.show { transform: translate(-50%, 0); }
-      .banner .txt { font-size: 13px; }
-      .banner .txt b { font-weight: 700; }
-
       .toast {
-        position: fixed; left: 50%; top: 16px; transform: translate(-50%, -140%);
-        z-index: 30; background: #141820; color: #fff;
-        padding: 10px 16px; border-radius: 12px; font-weight: 600; font-size: 13px;
-        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
-        transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1); max-width: 90vw; text-align: center;
+        position: fixed; left: 50%; top: 58px; z-index: 50; max-width: calc(100vw - 32px); padding: 8px 16px; border-radius: 999px;
+        background: var(--glass); box-shadow: 0 0 0 0.5px var(--glass-stroke), 0 8px 26px rgba(0, 0, 0, 0.16); font-weight: 500; text-align: center;
+        -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+        opacity: 0; transform: translate(-50%, -8px); transition: opacity 0.2s ease, transform 0.25s ease; pointer-events: none;
       }
-      .toast.show { transform: translate(-50%, 0); }
+      .toast.show { opacity: 1; transform: translate(-50%, 0); }
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
     </style>
   </head>
   <body>
-    <div class="aurora"></div>
     <div class="app">
-      <header>
-        <div class="brand">
-          <span class="mark">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v11m0 0l-4.5-4.5M12 14l4.5-4.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>
-          </span>
-          Lanes
-        </div>
-        <form class="add" id="addForm">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M9 17H7A5 5 0 017 7h2m6 0h2a5 5 0 010 10h-2M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <input id="url" type="text" placeholder="Dán liên kết để tải xuống" autocomplete="off" spellcheck="false" />
-          <button class="ghost merge-toggle" id="mergeToggle" type="button" title="net-merge: tải một file từ nhiều nguồn">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M4 6h7m9 0h-5M4 18h5m11 0h-7M4 12h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="14" cy="6" r="2.2" fill="currentColor"/><circle cx="10" cy="18" r="2.2" fill="currentColor"/></svg>
-          </button>
-          <button class="btn" type="submit">Tải</button>
-        </form>
-        <button class="ghost" id="gear" title="Cài đặt">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.7 7.7 0 000-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 00-1.7-1l-.4-2.5h-4l-.4 2.5a7.6 7.6 0 00-1.7 1l-2.4-1-2 3.4L4.6 11a7.7 7.7 0 000 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.4 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-        </button>
-      </header>
+      <aside class="sidebar">
+        <div class="side-top drag"></div>
+        <nav id="nav"></nav>
+      </aside>
 
-      <div class="merge-panel" id="mergePanel">
-        <div class="merge-card">
-          <div class="merge-head">
-            <b>net-merge</b><span class="beta">beta</span>
-            <span class="merge-note">Gộp băng thông từ nhiều nguồn của cùng một file.</span>
+      <main>
+        <header class="toolbar drag">
+          <div class="titles">
+            <h1 id="title">Tất cả</h1>
+            <span id="subtitle"></span>
           </div>
-          <textarea id="mergeUrls" rows="3" spellcheck="false" placeholder="Mỗi dòng một liên kết mirror của cùng một file:&#10;https://mirror-1.example/file.iso&#10;https://mirror-2.example/file.iso"></textarea>
-          <div class="merge-actions">
-            <span class="merge-hint" id="mergeHint">Lanes chia các đoạn cho từng nguồn, bỏ nguồn nào khác kích thước.</span>
-            <button class="btn" id="mergeGo" type="button">Tải gộp</button>
+          <div class="spacer"></div>
+          <div class="capsule">
+            <button class="tb" id="pauseAll" title="Tạm dừng tất cả" aria-label="Tạm dừng tất cả">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M9 6.5v11M15 6.5v11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+            <button class="tb" id="resumeAll" title="Tiếp tục tất cả" aria-label="Tiếp tục tất cả">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M8.5 6.2v11.6a.6.6 0 00.9.5l9.1-5.8a.6.6 0 000-1L9.4 5.7a.6.6 0 00-.9.5z" fill="currentColor"/></svg>
+            </button>
+          </div>
+          <div class="capsule">
+            <button class="tb" id="addOpen" title="Thêm liên kết (Cmd+N)" aria-label="Thêm liên kết">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 5.5v13M5.5 12h13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+          <label class="capsule search">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6" stroke="currentColor" stroke-width="2"/><path d="M15 15l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <input id="search" type="search" placeholder="Tìm kiếm" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="capsule">
+            <button class="tb" id="gear" title="Cài đặt (Cmd+,)" aria-label="Cài đặt">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.7 7.7 0 000-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 00-1.7-1l-.4-2.5h-4l-.4 2.5a7.6 7.6 0 00-1.7 1l-2.4-1-2 3.4L4.6 11a7.7 7.7 0 000 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.4 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="scroll" id="scroll">
+          <div id="list" role="listbox" aria-label="Danh sách tải"></div>
+          <div class="empty" id="empty">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 13.5l2.2-7.1A2 2 0 018.1 5h7.8a2 2 0 011.9 1.4l2.2 7.1V18a2 2 0 01-2 2H6a2 2 0 01-2-2v-4.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M4 13.5h4.5l1 2h5l1-2H20" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+            <h2 id="emptyTitle">Chưa có gì tải</h2>
+            <p id="emptyText">Dán một liên kết, hoặc tải từ trình duyệt qua tiện ích Lanes.</p>
+            <button class="push primary" id="emptyAdd">Thêm liên kết</button>
           </div>
         </div>
-      </div>
+      </main>
+    </div>
 
-      <div class="scroll">
-        <div class="list" id="list"></div>
-        <div class="empty" id="empty">
-          <span class="blob"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v11m0 0l-5-5m5 5l5-5" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 20h14" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg></span>
-          <h2>Chưa có gì tải</h2>
-          <p>Dán một liên kết ở trên, hoặc tải từ trình duyệt qua tiện ích Lanes.</p>
+    <div class="modal" id="addModal">
+      <form class="panel" id="addForm">
+        <h2>Thêm liên kết</h2>
+        <p class="lead">Lanes tải tệp qua nhiều kết nối cùng lúc và tiếp tục được khi dừng.</p>
+        <div class="segmented">
+          <button type="button" class="seg on" data-mode="one">Một nguồn</button>
+          <button type="button" class="seg" data-mode="many">Nhiều nguồn <span class="beta">beta</span></button>
+        </div>
+        <div id="oneBox">
+          <input id="url" class="field wide" type="text" placeholder="https://" autocomplete="off" spellcheck="false" />
+          <p class="hint">Tải cả loạt tệp đánh số: ghi khoảng trong ngoặc vuông, như https://site.vn/anh[001-120].jpg hoặc tap[a-f].zip.</p>
+        </div>
+        <div id="manyBox" hidden>
+          <textarea id="mergeUrls" class="field wide" rows="4" spellcheck="false" placeholder="Mỗi dòng một liên kết mirror của cùng một file:&#10;https://mirror-1.example/file.iso&#10;https://mirror-2.example/file.iso"></textarea>
+          <p class="hint">net-merge: Lanes chia các đoạn cho từng nguồn và gộp băng thông, bỏ nguồn nào khác kích thước.</p>
+        </div>
+        <div class="buttons">
+          <button type="button" class="push" id="addCancel">Hủy</button>
+          <button type="submit" class="push primary">Tải xuống</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="modal" id="settingsModal">
+      <div class="panel wide-panel">
+        <div class="panel-head">
+          <h2>Cài đặt</h2>
+          <button class="push primary small" id="settingsDone">Xong</button>
+        </div>
+        <div class="panel-body">
+          <div class="group-title">Tải xuống</div>
+          <div class="group">
+            <div class="item">
+              <div class="label">Số kết nối mỗi tệp<small>Nhiều kết nối tải nhanh hơn, nhưng vài máy chủ giới hạn số kết nối.</small></div>
+              <div class="control"><input type="range" id="conns" min="1" max="32" step="1" /><span class="value" id="connsVal">8</span></div>
+            </div>
+            <div class="item stack">
+              <div class="label">Thư mục lưu</div>
+              <div class="control"><input id="folder" class="field" type="text" spellcheck="false" /><button class="push" id="chooseFolder">Chọn...</button></div>
+            </div>
+            <div class="item">
+              <div class="label">Phân loại theo loại tệp<small>Như IDM: tệp nén vào Compressed, tài liệu vào Documents, nhạc vào Music, chương trình vào Programs, video vào Video, đều trong thư mục lưu. Tệp khác để ngay ở thư mục lưu.</small></div>
+              <div class="control"><label class="switch"><input type="checkbox" id="classify" /><span class="knob"></span></label></div>
+            </div>
+          </div>
+
+          <div class="group-title">Hàng đợi và tốc độ</div>
+          <div class="group">
+            <div class="item">
+              <div class="label">Số tệp tải cùng lúc<small>Các tệp còn lại chờ trong hàng đợi và tự bắt đầu khi có chỗ.</small></div>
+              <div class="control">
+                <select id="maxActive">
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+                  <option value="6">6</option><option value="8">8</option><option value="10">10</option><option value="0">Không giới hạn</option>
+                </select>
+              </div>
+            </div>
+            <div class="item">
+              <div class="label">Giới hạn tốc độ<small>Cho mọi tệp đang tải cộng lại, để mạng còn chỗ cho việc khác.</small></div>
+              <div class="control">
+                <select id="speedLimit">
+                  <option value="0">Không giới hạn</option><option value="262144">256 KB/s</option><option value="524288">512 KB/s</option>
+                  <option value="1048576">1 MB/s</option><option value="2097152">2 MB/s</option><option value="5242880">5 MB/s</option>
+                  <option value="10485760">10 MB/s</option><option value="20971520">20 MB/s</option><option value="52428800">50 MB/s</option>
+                </select>
+              </div>
+            </div>
+            <div class="item">
+              <div class="label">Hẹn giờ bắt đầu<small id="scheduleNote"></small></div>
+              <div class="control">
+                <input id="scheduleTime" class="field" type="time" value="01:00" />
+                <label class="switch"><input type="checkbox" id="scheduleOn" /><span class="knob"></span></label>
+              </div>
+            </div>
+            <div class="item">
+              <div class="label">Khi tải xong hết<small>Lanes chờ một phút trước khi làm, rồi tự trở về Không làm gì.</small></div>
+              <div class="control">
+                <select id="whenDone"><option value="">Không làm gì</option><option value="sleep">Cho máy ngủ</option><option value="shutdown">Tắt máy</option></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="group-title">Mạng</div>
+          <div class="group">
+            <div class="item">
+              <div class="label">net-merge: dùng mọi đường mạng <span class="beta">beta</span><small>Các kết nối của mỗi lượt tải được chia ra Wi-Fi, Ethernet và điện thoại cắm USB bật Điểm truy cập cá nhân cùng lúc, nên một tệp được tải bằng tổng tốc độ của các đường. Không cần quyền quản trị, chỉ lượt tải của Lanes tham gia. Kết nối đầu tiên tới mỗi trang đi đường mạng mặc định, đường khác chỉ nhận trang đó sau khi đã được kiểm tra với nó, và khi VPN chở toàn bộ lưu lượng thì không gộp gì.</small></div>
+              <div class="control"><label class="switch"><input type="checkbox" id="netMerge" /><span class="knob"></span></label></div>
+            </div>
+            <div class="item stack" id="netsItem" hidden><div class="nets" id="nets"></div></div>
+          </div>
+
+          <div class="group-title">Chung</div>
+          <div class="group">
+            <div class="item">
+              <div class="label">Mở cùng máy tính<small>Lanes chạy ẩn trong thanh trạng thái để tải theo hàng đợi.</small></div>
+              <div class="control"><label class="switch"><input type="checkbox" id="autostart" /><span class="knob"></span></label></div>
+            </div>
+            <div class="item">
+              <div class="label">Theo dõi clipboard<small>Chép một liên kết tới tệp (zip, exe, dmg, mp4, pdf...) ở bất kỳ đâu là Lanes mở bảng thêm liên kết với nó.</small></div>
+              <div class="control"><label class="switch"><input type="checkbox" id="watchClipboard" /><span class="knob"></span></label></div>
+            </div>
+            <div class="item stack">
+              <div class="label">Tiện ích trình duyệt<small>Chrome, Edge, Brave, Cốc Cốc: mở trang Tiện ích, bật Chế độ nhà phát triển rồi kéo thư mục này vào trang đó (hoặc bấm "Tải tiện ích đã giải nén" và chọn nó). Tiện ích chuyển mọi download sang Lanes và thêm nút "Tải video" trên các video. Lanes tự cập nhật thư mục này cùng app.</small></div>
+              <div class="control"><input id="extPath" class="field" type="text" readonly spellcheck="false" /><button class="push" id="extOpen">Mở thư mục</button></div>
+            </div>
+          </div>
+
+          <div class="group-title">Giới thiệu</div>
+          <div class="group">
+            <div class="item">
+              <div class="label">Lanes <span id="version">-</span></div>
+              <div class="control"><button class="push" id="checkUpdate">Kiểm tra cập nhật</button></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="sheet-wrap" id="sheetWrap">
-      <div class="scrim" id="scrim"></div>
-      <div class="sheet">
-        <h2>Cài đặt</h2>
-
-        <div class="group">
-          <div class="rowline"><label for="conns">Số kết nối mỗi tệp</label><b id="connsVal">8</b></div>
-          <input type="range" id="conns" min="1" max="32" step="1" />
-          <p class="hint">Nhiều kết nối tải nhanh hơn, nhưng vài máy chủ giới hạn số kết nối.</p>
-        </div>
-
-        <div class="group">
-          <label>Thư mục lưu</label>
-          <div class="folder">
-            <input id="folder" type="text" spellcheck="false" />
-            <button class="mini" id="chooseFolder">Chọn…</button>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="rowline">
-            <label for="classify" style="margin:0">Phân loại theo loại tệp</label>
-            <label class="switch"><input type="checkbox" id="classify" /><span class="track2"></span></label>
-          </div>
-          <p class="hint">Như IDM: tệp nén vào Compressed, tài liệu vào Documents, nhạc vào Music, chương trình vào Programs, video vào Video, đều trong thư mục lưu. Tệp khác để ngay ở thư mục lưu.</p>
-        </div>
-
-        <div class="group">
-          <div class="rowline">
-            <label for="netMerge" style="margin:0">net-merge: dùng mọi đường mạng <span class="beta">beta</span></label>
-            <label class="switch"><input type="checkbox" id="netMerge" /><span class="track2"></span></label>
-          </div>
-          <p class="hint">Như net-merge: các kết nối của mỗi lượt tải được chia ra Wi-Fi, Ethernet và điện thoại cắm USB bật Điểm truy cập cá nhân cùng lúc, nên một tệp được tải bằng tổng tốc độ của các đường. Không cần quyền quản trị, chỉ lượt tải của Lanes tham gia. Kết nối đầu tiên tới mỗi trang đi đường mạng mặc định, đường khác chỉ nhận trang đó sau khi đã được kiểm tra với nó, và khi VPN chở toàn bộ lưu lượng thì không gộp gì.</p>
-          <div class="nets" id="nets"></div>
-        </div>
-
-        <div class="group">
-          <div class="rowline">
-            <label for="autostart" style="margin:0">Mở cùng máy tính</label>
-            <label class="switch"><input type="checkbox" id="autostart" /><span class="track2"></span></label>
-          </div>
-          <p class="hint">Lanes chạy ẩn trong thanh trạng thái để tải theo hàng đợi.</p>
-        </div>
-
-        <div class="group">
-          <label for="extPath">Tiện ích trình duyệt</label>
-          <div class="folder">
-            <input id="extPath" type="text" readonly spellcheck="false" />
-            <button class="mini" id="extOpen">Mở thư mục</button>
-          </div>
-          <p class="hint">Chrome, Edge, Brave, Cốc Cốc: mở trang Tiện ích, bật Chế độ nhà phát triển rồi kéo thư mục này vào trang đó (hoặc bấm "Tải tiện ích đã giải nén" và chọn nó). Tiện ích chuyển mọi download sang Lanes và thêm nút "Tải video" trên các video. Lanes tự cập nhật thư mục này cùng app.</p>
-        </div>
-
-        <div class="group">
-          <div class="rowline">
-            <span class="version">Phiên bản <span id="version">—</span></span>
-            <button class="mini" id="checkUpdate">Kiểm tra cập nhật</button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div class="ctx" id="ctx" role="menu"></div>
 
     <div class="banner" id="banner">
-      <div class="txt" id="bannerTxt"></div>
-      <button class="btn" id="bannerBtn">Cập nhật</button>
+      <div id="bannerTxt"></div>
+      <button class="push primary" id="bannerBtn">Cập nhật</button>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -447,6 +480,8 @@
     <script>
       "use strict";
       const $ = (id) => document.getElementById(id);
+      const mac = /Mac OS X/.test(navigator.userAgent);
+      document.documentElement.classList.toggle("mac", mac);
       const pending = new Map();
       let seq = 1;
 
@@ -472,11 +507,9 @@
 
       // Download states, matching engine::state.
       const QUEUED = 0, RUNNING = 1, PAUSED = 2, DONE = 3, ERROR = 4;
-      const label = { [QUEUED]: "Đang chờ", [RUNNING]: "Đang tải", [PAUSED]: "Tạm dừng", [DONE]: "Hoàn tất", [ERROR]: "Lỗi" };
-      const klass = { [RUNNING]: "run", [PAUSED]: "paused", [DONE]: "done", [ERROR]: "error", [QUEUED]: "run" };
 
       function human(n) {
-        if (n == null) return "—";
+        if (n == null) return "-";
         const u = ["B", "KB", "MB", "GB", "TB"];
         let i = 0;
         while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
@@ -488,114 +521,341 @@
         if (sec < 3600) return Math.round(sec / 60) + " phút";
         return (sec / 3600).toFixed(1) + " giờ";
       }
-
-      const ICONS = {
-        pause: '<path d="M8 6v12M16 6v12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
-        resume: '<path d="M8 5l12 7-12 7V5z" fill="currentColor"/>',
-        open: '<path d="M5 12v6a1 1 0 001 1h12a1 1 0 001-1v-6M12 3v12m0 0l-4-4m4 4l4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
-        folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>',
-        remove: '<path d="M6 7h12M9 7V5h6v2m-7 0l1 12h6l1-12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
-        file: '<path d="M7 3h7l5 5v13H7V3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>',
-      };
-      const act = (name, title, kind = "") => `<button class="act ${kind}" data-act="${name}" title="${title}"><svg viewBox="0 0 24 24" fill="none">${ICONS[name]}</svg></button>`;
-
-      function render(items) {
-        $("empty").style.display = items.length ? "none" : "flex";
-        const list = $("list");
-        const seen = new Set();
-        for (const it of items) {
-          seen.add(it.id);
-          let card = document.querySelector(`[data-id="${it.id}"]`);
-          if (!card) {
-            card = document.createElement("div");
-            card.className = "card";
-            card.dataset.id = it.id;
-            list.prepend(card);
-          }
-          const pct = it.size ? Math.min(100, (it.downloaded / it.size) * 100) : it.state === DONE ? 100 : 0;
-          const k = klass[it.state] || "run";
-          let sub;
-          if (it.state === RUNNING) {
-            const left = it.size && it.speed ? eta((it.size - it.downloaded) / it.speed) : "";
-            const src = it.sources > 1 ? ` · ${it.sources} nguồn` : "";
-            const nets = it.links > 1 ? ` · ${it.links} đường mạng` : "";
-            sub = `${human(it.downloaded)} / ${human(it.size)} · ${human(it.speed)}/s${left ? " · còn " + left : ""} · ${it.connections} kết nối${nets}${src}`;
-          } else if (it.state === ERROR) {
-            sub = it.error || "Tải thất bại";
-          } else if (it.state === DONE) {
-            sub = human(it.size);
-          } else {
-            sub = `${human(it.downloaded)} / ${human(it.size)}`;
-          }
-          const actions =
-            (it.state === RUNNING || it.state === QUEUED ? act("pause", "Tạm dừng") : "") +
-            (it.state === PAUSED || it.state === ERROR ? act("resume", "Tiếp tục") : "") +
-            (it.state === DONE ? act("open", "Mở tệp") : "") +
-            act("folder", "Mở thư mục") +
-            act("remove", "Xóa", "danger");
-          card.innerHTML = `
-            <div class="top">
-              <span class="fileicon"><svg viewBox="0 0 24 24" fill="none">${ICONS.file}</svg></span>
-              <div class="meta">
-                <div class="name" title="${esc(it.filename)}">${esc(it.filename)}${it.sources > 1 ? '<span class="badge-merge">net-merge</span>' : ""}</div>
-                <div class="sub">${esc(sub)}</div>
-              </div>
-              <span class="pill ${k}">${label[it.state]}</span>
-              <div class="actions">${actions}</div>
-            </div>
-            <div class="bar"><div class="fill ${k} ${it.state === RUNNING ? "run" : ""}" style="width:${pct}%"></div></div>`;
-        }
-        for (const card of [...list.children]) {
-          if (!seen.has(Number(card.dataset.id))) card.remove();
-        }
-      }
-
       function esc(s) {
         return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
       }
+      function host(url) {
+        try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
+      }
+      const svg = (path, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" aria-hidden="true">${path}</svg>`;
+      const line = (d, w = 1.8) => `<path d="${d}" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
 
-      $("list").addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-act]");
-        if (!btn) return;
-        const id = Number(btn.closest("[data-id]").dataset.id);
-        const a = btn.dataset.act;
-        if (a === "remove") call("remove", { id, delete: false });
-        else call(a === "pause" ? "pause" : a === "resume" ? "resume" : a === "open" ? "open" : "reveal", { id });
+      // The file icons, one per category of the engine (engine::category), and the buttons of a row.
+      const GLYPH = {
+        Video: '<path d="M9 7.2v9.6a.6.6 0 00.9.5l7.6-4.8a.6.6 0 000-1L9.9 6.7a.6.6 0 00-.9.5z" fill="currentColor"/>',
+        Music: line("M10 17.5V7l8-2v10.5", 1.9) + '<circle cx="7.8" cy="17.5" r="2.3" fill="currentColor"/><circle cx="15.8" cy="15.5" r="2.3" fill="currentColor"/>',
+        Documents: line("M8 4h6l4 4v12H8z") + line("M10.5 12h5M10.5 15.5h5"),
+        Compressed: line("M5 8h14v11H5zM4 5h16v3H4zM10 12h4"),
+        Programs: line("M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z"),
+        other: line("M8 4h6l4 4v12H8z") + line("M14 4v4h4"),
+      };
+      const ACT = {
+        pause: line("M9 7v10M15 7v10", 2.2),
+        resume: '<path d="M8.5 6.2v11.6a.6.6 0 00.9.5l9.1-5.8a.6.6 0 000-1L9.4 5.7a.6.6 0 00-.9.5z" fill="currentColor"/>',
+        reveal: '<circle cx="10.5" cy="10.5" r="5.5" stroke="currentColor" stroke-width="2"/>' + line("M14.8 14.8l4.2 4.2", 2.2),
+        remove: line("M7.5 7.5l9 9M16.5 7.5l-9 9", 2),
+      };
+      const act = (name, title, cls = "") => `<button class="act ${cls}" data-act="${name}" title="${title}" aria-label="${title}">${svg(ACT[name])}</button>`;
+
+      // The sidebar: the downloads by state, then by type of file.
+      const NAV = [
+        { section: "Tải xuống" },
+        { id: "all", label: "Tất cả", icon: line("M4 13.5l2.2-7.1A2 2 0 018.1 5h7.8a2 2 0 011.9 1.4l2.2 7.1V18a2 2 0 01-2 2H6a2 2 0 01-2-2v-4.5zM4 13.5h4.5l1 2h5l1-2H20"), test: () => true },
+        { id: "active", label: "Đang tải", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M12 7.5v8m0 0l-3.2-3.2M12 15.5l3.2-3.2"), test: (it) => it.state === RUNNING || it.state === QUEUED },
+        { id: "done", label: "Đã xong", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M8.3 12.3l2.6 2.6 5-5.2"), test: (it) => it.state === DONE },
+        { id: "stopped", label: "Tạm dừng và lỗi", icon: '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.8"/>' + line("M10 9v6M14 9v6"), test: (it) => it.state === PAUSED || it.state === ERROR },
+        { section: "Loại tệp" },
+        { id: "Video", label: "Video", icon: line("M4 6.5h16v11H4z") + line("M10.5 9.8v4.4l3.8-2.2z"), test: (it) => it.category === "Video" },
+        { id: "Music", label: "Nhạc", icon: line("M10 17.5V7l8-2v10.5") + '<circle cx="7.8" cy="17.5" r="2.3" stroke="currentColor" stroke-width="1.8"/><circle cx="15.8" cy="15.5" r="2.3" stroke="currentColor" stroke-width="1.8"/>', test: (it) => it.category === "Music" },
+        { id: "Documents", label: "Tài liệu", icon: GLYPH.Documents, test: (it) => it.category === "Documents" },
+        { id: "Compressed", label: "Tệp nén", icon: GLYPH.Compressed, test: (it) => it.category === "Compressed" },
+        { id: "Programs", label: "Chương trình", icon: GLYPH.Programs, test: (it) => it.category === "Programs" },
+        { id: "other", label: "Khác", icon: GLYPH.other, test: (it) => !it.category },
+      ];
+      const views = NAV.filter((n) => n.id);
+      $("nav").innerHTML = NAV.map((n) =>
+        n.section
+          ? `<div class="section">${n.section}</div>`
+          : `<button class="nav-item" data-view="${n.id}">${svg(n.icon)}<span>${n.label}</span><span class="count"></span></button>`
+      ).join("");
+
+      let items = [];
+      // The queue's start time (seconds since 1970, 0 for none) and the speed limit, as the app keeps them.
+      let startAt = 0;
+      let speedLimit = 0;
+      const waiting = () => startAt * 1000 > Date.now();
+      const two = (n) => String(n).padStart(2, "0");
+      const clock = (sec) => { const d = new Date(sec * 1000); return `${two(d.getHours())}:${two(d.getMinutes())}`; };
+      const when = (sec) => clock(sec) + (new Date(sec * 1000).toDateString() === new Date().toDateString() ? "" : " ngày mai");
+      let view = "all";
+      let query = "";
+      let selected = null;
+
+      $("nav").addEventListener("click", (e) => {
+        const item = e.target.closest("[data-view]");
+        if (!item) return;
+        view = item.dataset.view;
+        draw();
+      });
+      $("search").addEventListener("input", () => {
+        query = $("search").value.trim().toLowerCase();
+        draw();
       });
 
+      function subline(it) {
+        if (it.state === RUNNING) {
+          const left = it.size && it.speed ? eta((it.size - it.downloaded) / it.speed) : "";
+          const nets = it.links > 1 ? ` · ${it.links} đường mạng` : "";
+          const src = it.sources > 1 ? ` · ${it.sources} nguồn` : "";
+          return `${human(it.downloaded)} / ${human(it.size)} · ${human(it.speed)}/s${left ? " · còn " + left : ""} · ${it.connections} kết nối${nets}${src}`;
+        }
+        if (it.state === QUEUED) return waiting() ? `Chờ tới ${when(startAt)}` : "Đang chờ";
+        if (it.state === PAUSED) return `Tạm dừng · ${human(it.downloaded)} / ${human(it.size)}`;
+        if (it.state === ERROR) return it.error || "Tải thất bại";
+        return [human(it.size), host(it.url)].filter(Boolean).join(" · ");
+      }
+
+      function rowHtml(it) {
+        const pct = it.size ? Math.min(100, (it.downloaded / it.size) * 100) : 0;
+        const fill = it.state === PAUSED ? "paused" : it.state === ERROR ? "error" : "";
+        const actions =
+          (it.state === RUNNING || it.state === QUEUED ? act("pause", "Tạm dừng") : "") +
+          (it.state === PAUSED || it.state === ERROR ? act("resume", "Tiếp tục") : "") +
+          (it.state === DONE ? act("reveal", mac ? "Hiện trong Finder" : "Mở thư mục chứa") : "") +
+          act("remove", "Xóa khỏi danh sách", "rm");
+        return `
+          <div class="icon ${it.category || "other"}">${svg(GLYPH[it.category] || GLYPH.other)}</div>
+          <div class="meta">
+            <div class="name" title="${esc(it.filename)}">${esc(it.filename)}${it.sources > 1 ? '<span class="tag">net-merge</span>' : ""}</div>
+            <div class="sub ${it.state === ERROR ? "err" : ""}">${esc(subline(it))}</div>
+            ${it.state === DONE ? "" : `<div class="bar"><div class="fill ${fill}" style="width:${pct}%"></div></div>`}
+          </div>
+          <div class="right">${actions}</div>`;
+      }
+
+      function draw() {
+        const current = views.find((v) => v.id === view) || views[0];
+        for (const v of views) {
+          const el = document.querySelector(`[data-view="${v.id}"]`);
+          el.classList.toggle("on", v.id === current.id);
+          const n = items.filter(v.test).length;
+          el.querySelector(".count").textContent = n || "";
+        }
+        const shown = items.filter((it) => current.test(it) && (!query || it.filename.toLowerCase().includes(query) || it.url.toLowerCase().includes(query)));
+        if (!shown.some((it) => it.id === selected)) selected = null;
+
+        const running = items.filter((it) => it.state === RUNNING);
+        const speed = running.reduce((n, it) => n + (it.speed || 0), 0);
+        $("title").textContent = current.label;
+        const status = [running.length ? `${running.length} đang tải · ${human(speed)}/s` : `${shown.length} mục`];
+        if (waiting()) status.push(`hẹn ${when(startAt)}`);
+        if (speedLimit) status.push(`tối đa ${human(speedLimit)}/s`);
+        $("subtitle").textContent = status.join(" · ");
+        $("pauseAll").disabled = !items.some((it) => it.state === RUNNING || it.state === QUEUED);
+        $("resumeAll").disabled = !items.some((it) => it.state === PAUSED);
+
+        const list = $("list");
+        const keep = new Map([...list.children].map((row) => [Number(row.dataset.id), row]));
+        shown.forEach((it, i) => {
+          let row = keep.get(it.id);
+          keep.delete(it.id);
+          if (!row) {
+            row = document.createElement("div");
+            row.className = "row";
+            row.setAttribute("role", "option");
+            row.dataset.id = it.id;
+          }
+          const html = rowHtml(it);
+          if (row.dataset.html !== html) {
+            row.innerHTML = html;
+            row.dataset.html = html;
+          }
+          row.classList.toggle("sel", it.id === selected);
+          row.setAttribute("aria-selected", it.id === selected);
+          if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null);
+        });
+        for (const row of keep.values()) row.remove();
+
+        const empty = !shown.length;
+        $("empty").style.display = empty ? "flex" : "none";
+        $("emptyTitle").textContent = query ? "Không có kết quả" : items.length ? "Không có mục nào" : "Chưa có gì tải";
+        $("emptyText").textContent = query ? `Không có tệp nào khớp "${$("search").value.trim()}".` : items.length ? "Mục này đang trống." : "Dán một liên kết, hoặc tải từ trình duyệt qua tiện ích Lanes.";
+        $("emptyAdd").hidden = !!(query || items.length);
+      }
+
+      const byId = (id) => items.find((it) => it.id === id);
+      function run(name, it) {
+        if (!it) return;
+        if (name === "remove") call("remove", { id: it.id, delete: false });
+        else if (name === "copy") copy(it.url);
+        else call(name, { id: it.id }).catch(toast);
+      }
+      function select(id) {
+        selected = id;
+        draw();
+      }
+
+      $("list").addEventListener("click", (e) => {
+        const row = e.target.closest(".row");
+        if (!row) return;
+        const id = Number(row.dataset.id);
+        const button = e.target.closest("[data-act]");
+        if (button) run(button.dataset.act, byId(id));
+        else select(id);
+      });
+      $("list").addEventListener("dblclick", (e) => {
+        const row = e.target.closest(".row");
+        const it = row && !e.target.closest("[data-act]") && byId(Number(row.dataset.id));
+        if (it?.state === DONE) run("open", it);
+      });
+      $("scroll").addEventListener("mousedown", (e) => {
+        if (!e.target.closest(".row")) select(null);
+      });
+
+      // The right-click menu of a download; elsewhere none, as in a native window.
+      const ctx = $("ctx");
+      function menuFor(it) {
+        const entries = [];
+        if (it.state === DONE) entries.push(["open", "Mở"]);
+        entries.push(["reveal", mac ? "Hiện trong Finder" : "Mở thư mục chứa"]);
+        if (it.state === RUNNING || it.state === QUEUED) entries.push(["pause", "Tạm dừng"]);
+        if (it.state === PAUSED || it.state === ERROR) entries.push(["resume", "Tiếp tục"]);
+        entries.push(["copy", "Sao chép liên kết"], null, ["remove", "Xóa khỏi danh sách"]);
+        return entries.map((e) => (e ? `<button role="menuitem" data-act="${e[0]}">${e[1]}</button>` : "<hr />")).join("");
+      }
+      document.addEventListener("contextmenu", (e) => {
+        if (e.target.closest("input, textarea")) return;
+        e.preventDefault();
+        const row = e.target.closest(".row");
+        if (!row) return closeMenu();
+        const it = byId(Number(row.dataset.id));
+        select(it.id);
+        ctx.innerHTML = menuFor(it);
+        ctx.dataset.id = it.id;
+        ctx.classList.add("open");
+        const x = Math.min(e.clientX, innerWidth - ctx.offsetWidth - 6);
+        const y = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 6);
+        ctx.style.left = `${Math.max(6, x)}px`;
+        ctx.style.top = `${Math.max(6, y)}px`;
+      });
+      ctx.addEventListener("click", (e) => {
+        const button = e.target.closest("[data-act]");
+        if (!button) return;
+        const it = byId(Number(ctx.dataset.id));
+        closeMenu();
+        run(button.dataset.act, it);
+      });
+      function closeMenu() {
+        ctx.classList.remove("open");
+      }
+      document.addEventListener("mousedown", (e) => {
+        if (!e.target.closest(".ctx")) closeMenu();
+      });
+      window.addEventListener("blur", () => {
+        closeMenu();
+        document.documentElement.classList.add("inactive");
+      });
+      window.addEventListener("focus", () => document.documentElement.classList.remove("inactive"));
+      $("scroll").addEventListener("scroll", closeMenu, { passive: true });
+
+      function copy(text) {
+        const area = document.createElement("textarea");
+        area.value = text;
+        document.body.append(area);
+        area.select();
+        const ok = document.execCommand("copy");
+        area.remove();
+        toast(ok ? "Đã sao chép liên kết" : "Không sao chép được liên kết");
+      }
+
+      // The window is dragged by its toolbar and the top of the sidebar, and zoomed by a double click there, as the
+      // title bar a macOS window no longer shows would.
+      document.addEventListener("mousedown", (e) => {
+        if (!mac || e.button !== 0 || !e.target.closest(".drag") || e.target.closest("button, input, label, a")) return;
+        call(e.detail === 2 ? "zoom" : "drag").catch(() => {});
+      });
+
+      // Adding a link: one source, or several mirrors of one file merged (net-merge).
+      let mode = "one";
+      function setMode(next) {
+        mode = next;
+        for (const seg of document.querySelectorAll(".seg")) seg.classList.toggle("on", seg.dataset.mode === mode);
+        $("oneBox").hidden = mode !== "one";
+        $("manyBox").hidden = mode !== "many";
+        (mode === "one" ? $("url") : $("mergeUrls")).focus();
+      }
+      function openAdd(url = "") {
+        closeAll();
+        $("addModal").classList.add("open");
+        setMode(mode);
+        if (url) $("url").value = url;
+        if (mode === "one") $("url").select();
+      }
+      for (const seg of document.querySelectorAll(".seg")) seg.addEventListener("click", () => setMode(seg.dataset.mode));
+      $("addOpen").addEventListener("click", () => openAdd());
+      $("emptyAdd").addEventListener("click", () => openAdd());
+      $("addCancel").addEventListener("click", closeAll);
       $("addForm").addEventListener("submit", (e) => {
         e.preventDefault();
-        const url = $("url").value.trim();
-        if (url) {
+        if (mode === "one") {
+          const url = $("url").value.trim();
+          if (!url) return;
           call("add", { url });
           $("url").value = "";
+        } else {
+          const urls = $("mergeUrls").value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+          if (!urls.length) return;
+          call("add", { urls });
+          $("mergeUrls").value = "";
+        }
+        closeAll();
+      });
+
+      function openSettings() {
+        closeAll();
+        $("settingsModal").classList.add("open");
+      }
+      function closeAll() {
+        closeMenu();
+        for (const m of document.querySelectorAll(".modal")) m.classList.remove("open");
+      }
+      const anyOpen = () => !!document.querySelector(".modal.open");
+      $("gear").addEventListener("click", openSettings);
+      $("settingsDone").addEventListener("click", closeAll);
+      for (const m of document.querySelectorAll(".modal")) m.addEventListener("mousedown", (e) => e.target === m && closeAll());
+      $("pauseAll").addEventListener("click", () => call("pause_all"));
+      $("resumeAll").addEventListener("click", () => call("resume_all"));
+
+      // The keys of a Mac list: arrows move the selection, Return opens, Delete takes the row off the list.
+      document.addEventListener("keydown", (e) => {
+        const cmd = e.metaKey || e.ctrlKey;
+        if (e.key === "Escape") {
+          if (anyOpen() || ctx.classList.contains("open")) closeAll();
+          else if (document.activeElement === $("search")) { $("search").value = ""; query = ""; $("search").blur(); draw(); }
+          else select(null);
+          return;
+        }
+        if (cmd && e.key.toLowerCase() === "n") { e.preventDefault(); openAdd(); return; }
+        if (cmd && e.key.toLowerCase() === "f") { e.preventDefault(); $("search").focus(); return; }
+        if (cmd && e.key === ",") { e.preventDefault(); openSettings(); return; }
+        if (anyOpen() || e.target.closest("input, textarea")) return;
+        const rows = [...$("list").children].map((row) => Number(row.dataset.id));
+        const at = rows.indexOf(selected);
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const next = rows[Math.max(0, Math.min(rows.length - 1, at + (e.key === "ArrowDown" ? 1 : -1)))];
+          if (next != null) select(next);
+          $("list").querySelector(".row.sel")?.scrollIntoView({ block: "nearest" });
+        } else if (e.key === "Enter" && byId(selected)?.state === DONE) {
+          run("open", byId(selected));
+        } else if ((e.key === "Backspace" || e.key === "Delete") && selected != null) {
+          e.preventDefault();
+          run("remove", byId(selected));
         }
       });
 
-      // net-merge panel: paste several mirror URLs of one file, download them merged.
-      const mergePanel = $("mergePanel"), mergeToggle = $("mergeToggle");
-      mergeToggle.addEventListener("click", () => {
-        const on = mergePanel.classList.toggle("open");
-        mergeToggle.classList.toggle("on", on);
-        if (on) $("mergeUrls").focus();
-      });
-      $("mergeGo").addEventListener("click", () => {
-        const urls = $("mergeUrls").value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
-        if (!urls.length) return;
-        call("add", { urls });
-        $("mergeUrls").value = "";
-        mergePanel.classList.remove("open");
-        mergeToggle.classList.remove("on");
+      // A link pasted anywhere but a field opens the sheet with it.
+      document.addEventListener("paste", (e) => {
+        if (e.target.closest("input, textarea")) return;
+        const text = (e.clipboardData?.getData("text") || "").trim();
+        if (/^https?:\/\//i.test(text)) openAdd(text);
       });
 
-      // Settings sheet.
-      const sheet = $("sheetWrap");
-      const openSheet = (on) => sheet.classList.toggle("open", on);
-      $("gear").addEventListener("click", () => openSheet(true));
-      $("scrim").addEventListener("click", () => openSheet(false));
-
-      $("conns").addEventListener("input", () => ($("connsVal").textContent = $("conns").value));
-      $("conns").addEventListener("change", () => call("set_connections", { connections: Number($("conns").value) }));
+      // Settings.
+      const conns = $("conns");
+      const paintRange = () => conns.style.setProperty("--p", `${((conns.value - conns.min) / (conns.max - conns.min)) * 100}%`);
+      conns.addEventListener("input", () => { $("connsVal").textContent = conns.value; paintRange(); });
+      conns.addEventListener("change", () => call("set_connections", { connections: Number(conns.value) }));
       $("folder").addEventListener("change", () => call("set_folder", { path: $("folder").value.trim() }));
       $("chooseFolder").addEventListener("click", async () => {
         const path = await call("choose_folder").catch(() => null);
@@ -609,14 +869,15 @@
       );
 
       // net-merge: each link with what it carries, or its state while it carries nothing.
-      const NET_STATE = { idle: "Sẵn sàng", checking: "Đang kiểm tra…", up: "Đang chạy", down: "Không có internet" };
+      const NET_STATE = { idle: "Sẵn sàng", checking: "Đang kiểm tra...", up: "Đang chạy", down: "Không có internet" };
       function renderNet(net) {
         const box = $("nets");
-        if (!net || !$("netMerge").checked) { box.replaceChildren(); return; }
+        $("netsItem").hidden = !net || !$("netMerge").checked;
+        if ($("netsItem").hidden) { box.replaceChildren(); return; }
         const rows = net.links.map((l) => {
           const name = l.label === l.name ? l.label : `${l.label} (${l.name})`;
           const state = l.connections ? `${l.connections} kết nối · ${human(l.speed)}/s` : NET_STATE[l.state] || l.state;
-          return `<div class="net"><span class="net-name">${esc(name)}${l.primary ? '<span class="badge-merge">mặc định</span>' : ""}</span><span class="net-state ${esc(l.state)}">${esc(state)}</span></div>`;
+          return `<div class="net"><span class="net-name">${esc(name)}${l.primary ? '<span class="tag">mặc định</span>' : ""}</span><span class="net-state ${esc(l.state)}">${esc(state)}</span></div>`;
         });
         const note = net.paused
           ? "VPN đang chở toàn bộ lưu lượng nên không gộp: lượt tải đi qua VPN như trước."
@@ -628,15 +889,49 @@
         box.innerHTML = rows.join("") + (note ? `<p class="hint">${esc(note)}</p>` : "");
       }
 
+      $("maxActive").addEventListener("change", () => call("set_max_active", { n: Number($("maxActive").value) }));
+      $("speedLimit").addEventListener("change", () =>
+        call("set_speed_limit", { bytes: Number($("speedLimit").value) }).then((n) => { speedLimit = n; draw(); }).catch(() => {})
+      );
+      $("whenDone").addEventListener("change", () =>
+        call("set_when_done", { action: $("whenDone").value }).then((a) => ($("whenDone").value = a)).catch(() => {})
+      );
+      $("watchClipboard").addEventListener("change", () =>
+        call("set_watch_clipboard", { on: $("watchClipboard").checked }).then((on) => ($("watchClipboard").checked = !!on)).catch(() => {})
+      );
+
+      // The schedule is a time of day; the next time it comes is worked out here, in the user's own time zone.
+      function nextAt(hhmm) {
+        const [h, m] = (hhmm || "01:00").split(":").map(Number);
+        const at = new Date();
+        at.setHours(h, m, 0, 0);
+        if (at <= new Date()) at.setDate(at.getDate() + 1);
+        return Math.floor(at.getTime() / 1000);
+      }
+      function setSchedule() {
+        const at = $("scheduleOn").checked ? nextAt($("scheduleTime").value) : 0;
+        call("set_schedule", { start_at: at }).then(showSchedule).catch(() => {});
+      }
+      function showSchedule(at) {
+        startAt = at || 0;
+        $("scheduleOn").checked = startAt > 0;
+        $("scheduleNote").textContent = startAt
+          ? `Hàng đợi bắt đầu lúc ${when(startAt)}. Tệp thêm từ giờ tới lúc đó sẽ chờ.`
+          : "Hàng đợi chờ tới giờ này mới bắt đầu, một lần, như khi muốn tải vào ban đêm.";
+        draw();
+      }
+      $("scheduleOn").addEventListener("change", setSchedule);
+      $("scheduleTime").addEventListener("change", () => $("scheduleOn").checked && setSchedule());
+
       $("autostart").addEventListener("change", () =>
         call("set_autostart", { on: $("autostart").checked }).then((on) => ($("autostart").checked = !!on)).catch(() => {})
       );
-      $("checkUpdate").addEventListener("click", () => { call("check_update"); toast("Đang kiểm tra bản mới…"); });
+      $("checkUpdate").addEventListener("click", () => { call("check_update"); toast("Đang kiểm tra bản mới..."); });
       $("extOpen").addEventListener("click", () => call("reveal_extension").catch(toast));
 
       // Update banner.
       $("bannerBtn").addEventListener("click", () => {
-        $("bannerBtn").textContent = "Đang tải…";
+        $("bannerBtn").textContent = "Đang tải...";
         $("bannerBtn").disabled = true;
         call("install_update");
       });
@@ -652,20 +947,35 @@
       const events = {
         hello(d) {
           $("version").textContent = d.version;
-          $("conns").max = d.max_connections;
-          $("conns").value = d.settings.connections;
+          conns.max = d.max_connections;
+          conns.value = d.settings.connections;
           $("connsVal").textContent = d.settings.connections;
+          paintRange();
           $("folder").value = d.settings.download_dir;
           $("autostart").checked = d.autostart;
           $("classify").checked = d.settings.classify;
           $("netMerge").checked = !!d.settings.net_merge;
           $("extPath").value = d.extension_dir;
+          $("maxActive").value = String(d.settings.max_active ?? 3);
+          speedLimit = d.settings.speed_limit || 0;
+          $("speedLimit").value = String(speedLimit);
+          $("whenDone").value = d.settings.when_done || "";
+          $("watchClipboard").checked = !!d.settings.watch_clipboard;
+          if (d.settings.start_at) $("scheduleTime").value = clock(d.settings.start_at);
+          showSchedule(d.settings.start_at);
         },
-        list: render,
+        // A link copied while the clipboard is watched.
+        add: (url) => openAdd(url),
+        schedule: showSchedule,
+        when_done: (action) => ($("whenDone").value = action),
+        list(data) {
+          items = data;
+          draw();
+        },
         net: renderNet,
         toast,
         // From the menu bar and the tray.
-        settings: () => openSheet(true),
+        settings: openSettings,
         autostart: (on) => ($("autostart").checked = on),
         update(d) {
           $("bannerTxt").innerHTML = `Có bản <b>Lanes ${esc(d.latest)}</b>. Bạn đang dùng ${esc(d.current)}.`;
@@ -682,15 +992,7 @@
         },
       };
 
-      // Paste a link anywhere to fill the box.
-      document.addEventListener("paste", (e) => {
-        const text = e.clipboardData?.getData("text") || "";
-        if (/^https?:\/\//i.test(text.trim()) && document.activeElement !== $("url")) {
-          $("url").value = text.trim();
-          $("url").focus();
-        }
-      });
-
+      draw();
       call("ready").catch(() => {});
     </script>
   </body>

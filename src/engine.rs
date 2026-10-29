@@ -23,7 +23,7 @@ use std::{
         atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The most connections a download may open, and the fallback default.
@@ -451,6 +451,11 @@ impl Engine {
 
     pub fn set_connections(&self, n: usize) {
         self.connections.store(n.clamp(1, MAX_CONNECTIONS) as u64, Ordering::Relaxed);
+    }
+
+    /// The speed limit over every download together, in bytes a second; 0 for none. It takes effect at once.
+    pub fn set_speed_limit(&self, bytes_per_second: u64) {
+        LIMIT.store(bytes_per_second, Ordering::Relaxed);
     }
 
     fn connection_count(&self) -> usize {
@@ -981,6 +986,7 @@ fn fetch_counted(task: &Task, piece: &Piece) -> Result<Vec<u8>, String> {
             Ok(n) => {
                 body.extend_from_slice(&buf[..n]);
                 task.downloaded.fetch_add(n as u64, Ordering::Relaxed);
+                throttle(task, n);
             }
             Err(e) => break Err(format!("Kết nối bị gián đoạn: {e}")),
         }
@@ -1039,6 +1045,36 @@ fn finish(file: &fs::File, part: &Path, final_path: &Path, size: Option<u64>) ->
     fs::rename(part, final_path).map_err(|e| format!("Không đổi tên được tệp: {e}"))
 }
 
+/// The speed limit in bytes a second, 0 for none, and the bucket of bytes it fills at that rate, which every read of
+/// every download takes from (`throttle`).
+/// ponytail: one limit over all downloads; one per download when someone needs it.
+static LIMIT: AtomicU64 = AtomicU64::new(0);
+static BUCKET: Mutex<Option<(f64, Instant)>> = Mutex::new(None);
+
+/// Holds a connection that has just read `n` bytes until the speed limit allows them. The bucket holds a second's worth
+/// at most and goes into debt for a read it cannot cover, which its reader then waits off; the wait is cut short by a
+/// pause, so a slow limit never keeps a paused download's connections alive.
+fn throttle(task: &Task, n: usize) {
+    let rate = LIMIT.load(Ordering::Relaxed);
+    if rate == 0 {
+        return;
+    }
+    let Some(wait) = BUCKET.lock().ok().map(|mut bucket| take(&mut bucket, rate, n, Instant::now())) else { return };
+    let until = Instant::now() + wait;
+    while Instant::now() < until && !task.paused_or_removed() {
+        thread::sleep((until - Instant::now()).min(Duration::from_millis(100)));
+    }
+}
+
+/// Takes `n` bytes out of the bucket at `now`, refilled at `rate` since it was last taken from, and gives how long the
+/// reader waits for the debt it leaves.
+fn take(bucket: &mut Option<(f64, Instant)>, rate: u64, n: usize, now: Instant) -> Duration {
+    let (tokens, last) = bucket.get_or_insert((rate as f64, now));
+    *tokens = (*tokens + now.saturating_duration_since(*last).as_secs_f64() * rate as f64).min(rate as f64) - n as f64;
+    *last = now;
+    Duration::from_secs_f64((-*tokens).max(0.0) / rate as f64)
+}
+
 /// One connection: fetches its part from where it left off, writing each chunk straight to its offset, up to the end of
 /// the part as it stands, which comes down when another connection takes over its second half. It returns whether the
 /// part is complete; a pause or a removal ends it early without an error. With mirrors (net-merge beta) it starts on
@@ -1084,6 +1120,7 @@ fn download_segment(task: &Task, file: &fs::File, part: &Part, source_start: usi
                             offset += n as u64;
                             part.done.fetch_add(n as u64, Ordering::Relaxed);
                             task.downloaded.fetch_add(n as u64, Ordering::Relaxed);
+                            throttle(task, n);
                         }
                         Err(_) => break,
                     }
@@ -1467,6 +1504,17 @@ mod tests {
 
     /// An HLS video through its master: plain and AES-128 segments, the second key run taking its IV from the
     /// sequence number, fetched in parallel and joined in order into one file, with the segment folder gone after.
+    #[test]
+    fn the_speed_limit_lets_a_second_through_then_makes_readers_wait() {
+        let (mut bucket, start) = (None, Instant::now());
+        let ms = |d: Duration| d.as_millis();
+        assert_eq!(ms(take(&mut bucket, 1000, 1000, start)), 0, "a full second's worth at once");
+        assert_eq!(ms(take(&mut bucket, 1000, 500, start)), 500, "then half a second for half again");
+        assert_eq!(ms(take(&mut bucket, 1000, 500, start + Duration::from_millis(500))), 500, "the debt is paid off over time");
+        assert_eq!(ms(take(&mut bucket, 1000, 0, start + Duration::from_secs(60))), 0);
+        assert_eq!(bucket.unwrap().0, 1000.0, "an idle bucket holds no more than a second");
+    }
+
     #[test]
     fn an_hls_video_is_fetched_decrypted_and_joined() {
         use cbc::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};

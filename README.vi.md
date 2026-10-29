@@ -70,11 +70,22 @@ tiếng Việt.
   và gộp băng thông. Nguồn nào khác kích thước hoặc không cho tải theo đoạn sẽ bị bỏ; mỗi đoạn tự chuyển sang nguồn
   khác khi một nguồn lỗi.
 - **Tạm dừng, tiếp tục, tốc độ và thời gian còn lại** cho từng tệp, theo thời gian thực.
+- **Hàng đợi.** Mặc định tối đa ba tệp tải cùng lúc (từ một tới mười, hoặc không giới hạn, trong Cài đặt); các tệp
+  còn lại chờ và tự bắt đầu khi có chỗ, tệp thêm trước bắt đầu trước.
+- **Giới hạn tốc độ** cho mọi tệp đang tải cộng lại, từ 256 KB/s tới 50 MB/s, để mạng còn chỗ cho việc khác.
+- **Hẹn giờ và việc làm sau cùng.** Hàng đợi có thể chờ tới một giờ trong ngày, như khi muốn tải vào ban đêm, và khi
+  tải xong hết thì cho máy ngủ hoặc tắt máy. Cả hai chỉ làm một lần; máy chờ một phút trước khi ngủ hay tắt, để còn
+  hủy được.
+- **Theo dõi clipboard.** Khi bật, chép một liên kết tới tệp (zip, exe, dmg, mp4, pdf...) ở bất kỳ đâu là Lanes mở
+  bảng thêm liên kết với nó, như IDM.
+- **Tải cả loạt.** `https://site.vn/anh[001-120].jpg` hoặc `tap[a-f].zip` thêm từng tệp trong khoảng đó.
 - **Phân loại như IDM.** Tệp được lưu vào `Compressed`, `Documents`, `Music`, `Programs`, `Video` trong thư mục lưu
   theo đuôi tệp (danh sách của IDM, thêm dmg và pkg vào chương trình); tệp khác để ngay ở thư mục lưu. Tắt được bằng
   một công tắc trong Cài đặt.
 - **Chỉnh số kết nối**, mở cùng máy tính, và tự cập nhật trong app.
-- **Giao diện Liquid Glass**, sáng và tối, theo hệ thống.
+- **Cửa sổ kiểu Mac**, sáng và tối, theo hệ thống: sidebar nổi xếp download theo trạng thái và theo loại tệp, chứa
+  ba nút của cửa sổ; ô tìm kiếm; danh sách như Finder có menu chuột phải và phím tắt của danh sách trên Mac; Cài đặt
+  chia nhóm như System Settings.
 
 ## Cài đặt
 

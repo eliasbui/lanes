@@ -70,11 +70,22 @@ bar, and is in English and Vietnamese.
   them, merging their bandwidth. A mirror that disagrees on the size or allows no ranges is dropped, and each segment
   moves to the next mirror when one fails.
 - **Pause, resume, speed and ETA** for every download, live.
+- **A queue.** At most three downloads run at once by default (one to ten, or no limit, in Settings); the rest wait
+  and start as room opens up, oldest first.
+- **A speed limit** over every download together, from 256 KB/s to 50 MB/s, so the network has room for the rest.
+- **A schedule and what to do after.** The queue can wait for a time of day, for a download at night, and once
+  nothing is left the computer can sleep or shut down. Both are done once; the computer waits a minute first, which
+  is the moment to call it off.
+- **Clipboard watch.** When it is on, a link to a file (zip, exe, dmg, mp4, pdf, ...) copied anywhere opens the add
+  sheet with it, as IDM does.
+- **Batch links.** `https://site.example/img[001-120].jpg` or `disk[a-f].zip` adds each file of the range.
 - **Categories as in IDM.** Files go into `Compressed`, `Documents`, `Music`, `Programs` and `Video` inside the
   download folder by their extension (IDM's lists, plus dmg and pkg as programs); anything else stays in the folder
   itself. One switch in Settings turns it off.
 - **A connection setting**, launch at login, and in-app updates.
-- **Liquid Glass interface**, light and dark, that follows the system.
+- **A Mac window**, light and dark, that follows the system: a floating sidebar that sorts the downloads by state and
+  by type and holds the window's buttons, a search field, rows as in Finder with a right-click menu and the keys of a
+  Mac list, and Settings grouped as in System Settings.
 
 ## Install
 

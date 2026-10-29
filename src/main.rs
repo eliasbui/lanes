@@ -20,7 +20,10 @@ use std::{
     collections::HashMap,
     fs::File,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -47,6 +50,12 @@ const TRAY_ICON: &[u8] = include_bytes!("../assets/icon-64.png");
 const TICK: Duration = Duration::from_millis(500);
 /// How often the inbox from the browser extension is checked.
 const INBOX_EVERY: Duration = Duration::from_secs(2);
+/// How often the clipboard is looked at while it is watched.
+const CLIPBOARD_EVERY: Duration = Duration::from_millis(1500);
+/// How long the computer waits to sleep or shut down once the downloads are done, for the user to call it off.
+const AFTER_WAIT: i64 = 60;
+/// The most files one batch link stands for.
+const MAX_BATCH: usize = 1000;
 
 fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
@@ -79,11 +88,32 @@ struct Settings {
     classify: bool,
     /// net-merge: the connections of a download are spread over every network link (src/netmerge.rs).
     net_merge: bool,
+    /// The most downloads that run at once, the others waiting in the queue; 0 for no limit.
+    max_active: usize,
+    /// The speed limit over every download together, in bytes a second; 0 for none.
+    speed_limit: u64,
+    /// When the queue starts, in seconds since 1970, which the page works out from the local time; 0 to start at once.
+    /// Once that time comes it goes back to 0.
+    start_at: i64,
+    /// What the computer does once nothing is left to download: "", "sleep" or "shutdown". Done once, then "".
+    when_done: String,
+    /// A link to a file copied anywhere opens the add sheet with it, as IDM does.
+    watch_clipboard: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { download_dir: downloads_dir().to_string_lossy().into_owned(), connections: engine::DEFAULT_CONNECTIONS, classify: true, net_merge: false }
+        Settings {
+            download_dir: downloads_dir().to_string_lossy().into_owned(),
+            connections: engine::DEFAULT_CONNECTIONS,
+            classify: true,
+            net_merge: false,
+            max_active: 3,
+            speed_limit: 0,
+            start_at: 0,
+            when_done: String::new(),
+            watch_clipboard: false,
+        }
     }
 }
 
@@ -122,6 +152,8 @@ enum UserEvent {
     Menu(MenuId),
     TrayClick,
     Tick,
+    /// A link to a file the user copied, while the clipboard is watched.
+    Copied(String),
 }
 
 fn main() {
@@ -152,6 +184,8 @@ fn main() {
     let engine = Arc::new(Engine::new());
     engine.set_connections(settings.connections);
     engine.set_net_merge(settings.net_merge);
+    engine.set_speed_limit(settings.speed_limit);
+    let watching = Arc::new(AtomicBool::new(settings.watch_clipboard));
     let background = std::env::args().any(|a| a == autostart::BACKGROUND);
     // Notifications come from Lanes. Left unset, the library looks for an app named "use_default" through AppleScript
     // before the first one, and macOS asks the user where that app is.
@@ -209,6 +243,11 @@ fn main() {
             }
         });
     }
+    // The clipboard, while copied links to files are offered for download.
+    {
+        let (watching, proxy) = (watching.clone(), proxy.clone());
+        thread::spawn(move || watch_clipboard(&watching, &proxy));
+    }
     // The steady heartbeat that refreshes the list and its speeds.
     {
         let proxy = proxy.clone();
@@ -236,6 +275,9 @@ fn main() {
         status: String::new(),
         speeds: HashMap::new(),
         published: String::new(),
+        watching,
+        busy: false,
+        after_at: 0,
     };
     // Pick up where downloads that were running last time left off.
     app.resume_unfinished();
@@ -267,6 +309,10 @@ fn main() {
             Event::UserEvent(UserEvent::Added(req)) => app.add(req),
             Event::UserEvent(UserEvent::Tick) => app.tick(),
             Event::UserEvent(UserEvent::TrayClick) => app.show(target),
+            Event::UserEvent(UserEvent::Copied(url)) => {
+                app.show(target);
+                app.post_ready(json!({ "event": "add", "data": url }));
+            }
             Event::UserEvent(UserEvent::Menu(id)) if id == menus::QUIT => *flow = ControlFlow::Exit,
             Event::UserEvent(UserEvent::Menu(id)) => app.menu(id.as_ref(), target),
             _ => {}
@@ -292,6 +338,12 @@ struct App {
     speeds: HashMap<i64, (u64, Instant)>,
     /// The progress last written for the browser extension, so an unchanged list is not written again.
     published: String,
+    /// Whether the clipboard is watched, shared with its thread.
+    watching: Arc<AtomicBool>,
+    /// Whether anything ran or waited at the last tick, and when the computer sleeps or shuts down (`when_done`); 0
+    /// while it does not.
+    busy: bool,
+    after_at: i64,
 }
 
 impl App {
@@ -388,10 +440,59 @@ impl App {
         let _ = store::set_status(&self.db, id, engine::state::PAUSED, "");
     }
 
-    fn resume(&self, id: i64) {
-        if let Ok(Some(row)) = store::get(&self.db, id) {
-            let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
-            self.engine.start(id, row.source_list(), row.final_path(), row.header_pairs(), row.kind());
+    /// A download resumed goes back in the queue, and starts at once when there is room.
+    fn resume(&mut self, id: i64) {
+        let _ = store::set_status(&self.db, id, engine::state::QUEUED, "");
+        self.start_queued();
+    }
+
+    /// Starts the queued downloads, oldest first, while fewer than the most at once run and the schedule has come. A
+    /// queued download is not in the engine: its row says all it needs to start.
+    fn start_queued(&mut self) {
+        if self.settings.start_at > now() {
+            return;
+        }
+        if self.settings.start_at != 0 {
+            self.settings.start_at = 0;
+            self.settings.save(&self.dir);
+            self.post(&json!({ "event": "schedule", "data": 0 }));
+        }
+        let limit = match self.settings.max_active {
+            0 => usize::MAX,
+            n => n,
+        };
+        let mut running = self.engine.snapshots().iter().filter(|s| s.state == engine::state::RUNNING).count();
+        for row in store::list(&self.db).unwrap_or_default().iter().rev().filter(|r| r.status == engine::state::QUEUED) {
+            if running >= limit {
+                break;
+            }
+            let _ = store::set_status(&self.db, row.id, engine::state::RUNNING, "");
+            self.engine.start(row.id, row.source_list(), row.final_path(), row.header_pairs(), row.kind());
+            running += 1;
+        }
+    }
+
+    /// Once nothing runs or waits any more, the computer sleeps or shuts down as `when_done` asks, a minute later so
+    /// the user can still call it off; it is done once, then `when_done` is cleared.
+    fn after_done(&mut self, items: &[Value]) {
+        let busy = items.iter().any(|i| matches!(i["state"].as_u64().map(|s| s as u8), Some(engine::state::QUEUED | engine::state::RUNNING)));
+        let was_busy = std::mem::replace(&mut self.busy, busy);
+        if self.settings.when_done.is_empty() || busy {
+            self.after_at = 0;
+        } else if was_busy {
+            self.after_at = now() + AFTER_WAIT;
+            let what = if self.settings.when_done == "shutdown" { "tắt máy" } else { "cho máy ngủ" };
+            let message = format!("Đã tải xong. Lanes sẽ {what} sau một phút, chọn Không làm gì trong Cài đặt để hủy.");
+            let _ = notify_rust::Notification::new().summary(APP_NAME).body(&message).show();
+            self.post(&json!({ "event": "toast", "data": message }));
+        } else if self.after_at != 0 && now() >= self.after_at {
+            self.after_at = 0;
+            let action = std::mem::take(&mut self.settings.when_done);
+            self.settings.save(&self.dir);
+            self.post(&json!({ "event": "when_done", "data": "" }));
+            if let Err(e) = power(&action) {
+                self.fail(e);
+            }
         }
     }
 
@@ -411,14 +512,20 @@ impl App {
 
     fn open_window(&self, target: &EventLoopWindowTarget<UserEvent>) -> Result<(Window, WebView), String> {
         let icon = decode_png(WINDOW_ICON).and_then(|(rgba, w, h)| Icon::from_rgba(rgba, w, h).ok());
-        let window = WindowBuilder::new()
+        let builder = WindowBuilder::new()
             .with_title(APP_NAME)
             .with_inner_size(LogicalSize::new(940.0, 640.0))
-            .with_min_inner_size(LogicalSize::new(560.0, 480.0))
+            .with_min_inner_size(LogicalSize::new(640.0, 480.0))
             .with_window_icon(icon)
-            .with_theme(None)
-            .build(target)
-            .map_err(|e| e.to_string())?;
+            .with_theme(None);
+        // On macOS the page runs up under a see-through title bar, so its sidebar holds the window's buttons as Finder's
+        // does, and its toolbar moves the window (ipc "drag").
+        #[cfg(target_os = "macos")]
+        let builder = {
+            use tao::platform::macos::WindowBuilderExtMacOS;
+            builder.with_titlebar_transparent(true).with_title_hidden(true).with_fullsize_content_view(true).with_traffic_light_inset(tao::dpi::LogicalPosition::new(20.0, 20.0))
+        };
+        let window = builder.build(target).map_err(|e| e.to_string())?;
         let proxy = self.proxy.clone();
         let builder = WebViewBuilder::new()
             .with_html(INDEX_HTML)
@@ -450,13 +557,14 @@ impl App {
         }
     }
 
-    /// Restarts every download that was still going when the app last closed.
-    fn resume_unfinished(&self) {
+    /// Puts every download that was still going when the app last closed back in the queue, which starts them.
+    fn resume_unfinished(&mut self) {
         for row in store::list(&self.db).unwrap_or_default() {
-            if matches!(row.status, engine::state::RUNNING | engine::state::QUEUED) {
-                self.engine.start(row.id, row.source_list(), row.final_path(), row.header_pairs(), row.kind());
+            if row.status == engine::state::RUNNING {
+                let _ = store::set_status(&self.db, row.id, engine::state::QUEUED, "");
             }
         }
+        self.start_queued();
     }
 
     /// One or more URLs typed or pasted into the page. Several URLs are the mirrors of one file (net-merge, beta): the
@@ -493,9 +601,20 @@ impl App {
         if let Some(size) = req.size {
             let _ = store::set_size(&self.db, id, size);
         }
-        let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
-        self.engine.start(id, req.sources, path, req.headers, req.kind);
+        let _ = store::set_status(&self.db, id, engine::state::QUEUED, "");
+        self.start_queued();
         self.push_list();
+    }
+
+    /// The files a batch link stands for (`expand`), each added as its own download.
+    fn add_batch(&self, urls: Vec<String>) {
+        self.post(&json!({ "event": "toast", "data": format!("Đang thêm {} tệp", urls.len()) }));
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            for url in urls {
+                add_probed(&proxy, vec![url]);
+            }
+        });
     }
 
     /// Says why a download could not be added, in the window and as a notification, since a download the browser handed
@@ -529,7 +648,9 @@ impl App {
         // Forget the speed of anything no longer running.
         self.speeds.retain(|id, _| live.contains(id));
         self.engine.release_idle();
+        self.start_queued();
         let items = self.items();
+        self.after_done(&items);
         browser::publish(&self.dir, &items, &mut self.published);
         self.show_status(&items);
         if self.window.is_some() {
@@ -587,13 +708,15 @@ impl App {
         for row in &rows {
             let snap = snaps.get(&row.id);
             let downloaded = snap.map(|s| s.downloaded).unwrap_or(0);
-            let state = snap.map(|s| s.state).unwrap_or(row.status);
+            // A queued row waits outside the engine, which may still hold the task paused before it was queued.
+            let state = if row.status == engine::state::QUEUED { row.status } else { snap.map(|s| s.state).unwrap_or(row.status) };
             let size = snap.and_then(|s| s.size).or(row.size.map(|n| n as u64));
             let speed = self.speed(row.id, state, downloaded);
             items.push(json!({
                 "id": row.id,
                 "url": row.url,
                 "filename": row.filename,
+                "category": engine::category(&row.filename),
                 "dir": row.dir,
                 "state": state,
                 "size": size,
@@ -662,7 +785,15 @@ impl App {
                     Some(arr) => arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
                     None => vec![args["url"].as_str().unwrap_or_default().to_owned()],
                 };
-                self.add_sources(urls);
+                // One link with a [from-to] in it is a batch of files.
+                match urls.as_slice() {
+                    [one] => match expand(one.trim()) {
+                        Some(Ok(batch)) => self.add_batch(batch),
+                        Some(Err(e)) => self.post(&json!({ "event": "toast", "data": e })),
+                        None => self.add_sources(urls),
+                    },
+                    _ => self.add_sources(urls),
+                }
                 reply(self, Ok(Value::Null));
             }
             "pause" => {
@@ -691,6 +822,20 @@ impl App {
                 self.push_list();
                 reply(self, Ok(Value::Null));
             }
+            "pause_all" | "resume_all" => {
+                self.menu(if cmd == "pause_all" { menus::PAUSE_ALL } else { menus::RESUME_ALL }, target);
+                reply(self, Ok(Value::Null));
+            }
+            // The page's toolbar stands in for the title bar it covers on macOS (open_window).
+            "drag" | "zoom" => {
+                if let Some((window, _)) = &self.window {
+                    match cmd {
+                        "drag" => drop(window.drag_window()),
+                        _ => window.set_maximized(!window.is_maximized()),
+                    }
+                }
+                reply(self, Ok(Value::Null));
+            }
             "open" => reply(self, self.file_of(num("id")).and_then(|p| open_path(&p))),
             "reveal" => reply(self, self.file_of(num("id")).and_then(|p| reveal(&p))),
             "reveal_extension" => reply(self, reveal(&browser::extension_dir(&self.dir))),
@@ -715,6 +860,39 @@ impl App {
                     self.settings.save(&self.dir);
                 }
                 reply(self, Ok(json!(self.settings.download_dir)));
+            }
+            "set_max_active" => {
+                self.settings.max_active = args["n"].as_u64().unwrap_or(0).min(50) as usize;
+                self.settings.save(&self.dir);
+                self.start_queued();
+                reply(self, Ok(json!(self.settings.max_active)));
+            }
+            "set_speed_limit" => {
+                self.settings.speed_limit = args["bytes"].as_u64().unwrap_or(0);
+                self.engine.set_speed_limit(self.settings.speed_limit);
+                self.settings.save(&self.dir);
+                reply(self, Ok(json!(self.settings.speed_limit)));
+            }
+            "set_schedule" => {
+                self.settings.start_at = args["start_at"].as_i64().unwrap_or(0).max(0);
+                self.settings.save(&self.dir);
+                self.start_queued();
+                reply(self, Ok(json!(self.settings.start_at)));
+            }
+            "set_when_done" => {
+                let action = args["action"].as_str().unwrap_or_default();
+                self.settings.when_done = if matches!(action, "sleep" | "shutdown") { action.to_owned() } else { String::new() };
+                if self.settings.when_done.is_empty() {
+                    self.after_at = 0;
+                }
+                self.settings.save(&self.dir);
+                reply(self, Ok(json!(self.settings.when_done)));
+            }
+            "set_watch_clipboard" => {
+                self.settings.watch_clipboard = args["on"].as_bool().unwrap_or(false);
+                self.watching.store(self.settings.watch_clipboard, Ordering::Relaxed);
+                self.settings.save(&self.dir);
+                reply(self, Ok(json!(self.settings.watch_clipboard)));
             }
             "set_classify" => {
                 self.settings.classify = args["on"].as_bool().unwrap_or(true);
@@ -800,6 +978,11 @@ fn add_probed(proxy: &EventLoopProxy<UserEvent>, sources: Vec<String>) {
 
 /// The first http or https link on the clipboard.
 fn clipboard_link() -> Option<String> {
+    clipboard_text()?.split_whitespace().find(|w| w.starts_with("http://") || w.starts_with("https://")).map(str::to_owned)
+}
+
+/// The text on the clipboard.
+fn clipboard_text() -> Option<String> {
     let mut command = if cfg!(target_os = "macos") {
         cmd("/usr/bin/pbpaste")
     } else if cfg!(windows) {
@@ -810,7 +993,94 @@ fn clipboard_link() -> Option<String> {
         return None;
     };
     let out = command.output().ok()?;
-    String::from_utf8_lossy(&out.stdout).split_whitespace().find(|w| w.starts_with("http://") || w.starts_with("https://")).map(str::to_owned)
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Offers each link to a file the user copies while `on` is set, once. The clipboard is read every so often, on
+/// Windows only when its count of changes moved, since reading it there starts PowerShell. What it held when watching
+/// began is not offered.
+fn watch_clipboard(on: &AtomicBool, proxy: &EventLoopProxy<UserEvent>) {
+    let mut last: Option<String> = None;
+    loop {
+        thread::sleep(CLIPBOARD_EVERY);
+        if !on.load(Ordering::Relaxed) {
+            last = None;
+            continue;
+        }
+        let changed = clipboard_changed();
+        if last.is_some() && !changed {
+            continue;
+        }
+        let text = clipboard_text().unwrap_or_default();
+        if last.replace(text.clone()).is_some_and(|seen| seen != text) {
+            if let Some(url) = file_link(&text) {
+                let _ = proxy.send_event(UserEvent::Copied(url));
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn clipboard_changed() -> bool {
+    static SEEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let count = unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() };
+    SEEN.swap(count, Ordering::Relaxed) != count
+}
+
+#[cfg(not(windows))]
+fn clipboard_changed() -> bool {
+    true
+}
+
+/// `text` when it is one http or https link to a file of a type Lanes sorts (`engine::category`), the links IDM's
+/// clipboard watch takes; not a page's.
+fn file_link(text: &str) -> Option<String> {
+    let text = text.trim();
+    let url = url::Url::parse(text).ok().filter(|u| matches!(u.scheme(), "http" | "https") && !text.contains(char::is_whitespace))?;
+    let name = url.path_segments()?.next_back()?;
+    engine::category(name).map(|_| text.to_owned())
+}
+
+/// The addresses a batch link stands for, as IDM writes one: a `[from-to]` of numbers, `[001-120]` keeping its zeros,
+/// or of letters, `[a-z]`. None for an ordinary link; an error past `MAX_BATCH` files.
+fn expand(url: &str) -> Option<Result<Vec<String>, String>> {
+    let open = url.find('[')?;
+    let close = open + url[open..].find(']')?;
+    let (from, to) = url[open + 1..close].split_once('-')?;
+    let (head, tail) = (&url[..open], &url[close + 1..]);
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let items: Vec<String> = if digits(from) && digits(to) {
+        let (a, b) = (from.parse::<u64>().ok()?, to.parse::<u64>().ok()?);
+        let (a, b) = (a.min(b), a.max(b));
+        if b - a >= MAX_BATCH as u64 {
+            return Some(Err(format!("Một loạt có tối đa {MAX_BATCH} tệp")));
+        }
+        let width = if from.starts_with('0') { from.len() } else { 0 };
+        (a..=b).map(|n| format!("{n:0width$}")).collect()
+    } else {
+        let (&[a], &[b]) = (from.as_bytes(), to.as_bytes()) else { return None };
+        if !(a.is_ascii_alphabetic() && b.is_ascii_alphabetic() && a.is_ascii_lowercase() == b.is_ascii_lowercase()) {
+            return None;
+        }
+        (a.min(b)..=a.max(b)).map(|c| (c as char).to_string()).collect()
+    };
+    Some(Ok(items.iter().map(|i| format!("{head}{i}{tail}")).collect()))
+}
+
+/// Puts the computer to sleep or shuts it down, for `when_done`.
+fn power(action: &str) -> Result<(), String> {
+    let (program, args): (&str, &[&str]) = match (action, cfg!(windows)) {
+        ("sleep", false) => ("/usr/bin/pmset", &["sleepnow"]),
+        ("shutdown", false) => ("/usr/bin/osascript", &["-e", "tell application \"System Events\" to shut down"]),
+        ("sleep", true) => ("rundll32.exe", &["powrprof.dll,SetSuspendState", "0,1,0"]),
+        ("shutdown", true) => ("shutdown", &["/s", "/t", "0"]),
+        _ => return Ok(()),
+    };
+    match cmd(program).args(args).status() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) | Err(_) if action == "shutdown" => Err("Lanes không tắt được máy. Trên macOS, hãy cho Lanes điều khiển System Events trong Cài đặt hệ thống, Quyền riêng tư và bảo mật, Tự động hóa.".into()),
+        _ => Err("Lanes không cho máy ngủ được".into()),
+    }
 }
 
 /// The links of net-merge as the page shows them; the addresses stay here.
@@ -898,5 +1168,27 @@ mod tests {
     fn older_settings_keep_the_folder_and_classify_by_default() {
         let settings: super::Settings = serde_json::from_str(r#"{"download_dir": "/x", "connections": 4}"#).unwrap();
         assert_eq!((settings.download_dir.as_str(), settings.connections, settings.classify), ("/x", 4, true));
+        assert_eq!((settings.max_active, settings.speed_limit, settings.start_at, settings.when_done.as_str()), (3, 0, 0, ""));
+    }
+
+    #[test]
+    fn a_batch_link_stands_for_each_file_of_its_range() {
+        let all = |url: &str| super::expand(url).unwrap().unwrap();
+        assert_eq!(all("https://x.example/p[08-10].jpg"), ["https://x.example/p08.jpg", "https://x.example/p09.jpg", "https://x.example/p10.jpg"]);
+        assert_eq!(all("https://x.example/[9-11]/a.zip"), ["https://x.example/9/a.zip", "https://x.example/10/a.zip", "https://x.example/11/a.zip"]);
+        assert_eq!(all("https://x.example/disk[c-a].iso").len(), 3, "a range given backwards");
+        assert_eq!(super::expand("https://x.example/a.zip?f[0]=1"), None, "a bracket that is no range");
+        assert_eq!(super::expand("https://x.example/[a-Z].zip"), None);
+        assert_eq!(super::expand("https://x.example/[aa-zz].zip"), None);
+        assert!(super::expand("https://x.example/[0-5000].jpg").unwrap().is_err());
+    }
+
+    #[test]
+    fn only_a_lone_link_to_a_file_is_taken_from_the_clipboard() {
+        assert_eq!(super::file_link(" https://dl.example/setup.exe?x=1 \n").as_deref(), Some("https://dl.example/setup.exe?x=1"));
+        assert_eq!(super::file_link("https://cdn.example/Music/a.mp3").as_deref(), Some("https://cdn.example/Music/a.mp3"));
+        assert_eq!(super::file_link("https://example.com/page"), None, "a page");
+        assert_eq!(super::file_link("see https://dl.example/setup.exe"), None, "a sentence with a link in it");
+        assert_eq!(super::file_link("ftp://dl.example/setup.exe"), None);
     }
 }
