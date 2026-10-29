@@ -293,6 +293,15 @@
 
       .version { color: var(--muted); font-size: 12.5px; }
 
+      /* net-merge: the links and what each carries. */
+      .nets { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+      .nets:empty { display: none; }
+      .net { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-radius: 10px; background: var(--field); border: 1px solid var(--stroke); font-size: 13px; }
+      .net-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .net-state { flex: none; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+      .net-state.up { color: #1ca64c; }
+      .net-state.down { color: #ff453a; }
+
       /* The update banner floats at the bottom. */
       .banner {
         position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 140%);
@@ -391,6 +400,15 @@
             <span class="switch"><input type="checkbox" id="classify" /><span class="track2"></span></span>
           </div>
           <p class="hint">Như IDM: tệp nén vào Compressed, tài liệu vào Documents, nhạc vào Music, chương trình vào Programs, video vào Video, đều trong thư mục lưu. Tệp khác để ngay ở thư mục lưu.</p>
+        </div>
+
+        <div class="group">
+          <div class="rowline">
+            <label for="netMerge" style="margin:0">net-merge: dùng mọi đường mạng</label>
+            <span class="switch"><input type="checkbox" id="netMerge" /><span class="track2"></span></span>
+          </div>
+          <p class="hint">Như net-merge: các kết nối của mỗi lượt tải được chia ra Wi-Fi, Ethernet và điện thoại cắm USB bật Điểm truy cập cá nhân cùng lúc, nên một tệp được tải bằng tổng tốc độ của các đường. Không cần quyền quản trị, chỉ lượt tải của Lanes tham gia. Kết nối đầu tiên tới mỗi trang đi đường mạng mặc định, đường khác chỉ nhận trang đó sau khi đã được kiểm tra với nó, và khi VPN chở toàn bộ lưu lượng thì không gộp gì.</p>
+          <div class="nets" id="nets"></div>
         </div>
 
         <div class="group">
@@ -500,7 +518,8 @@
           if (it.state === RUNNING) {
             const left = it.size && it.speed ? eta((it.size - it.downloaded) / it.speed) : "";
             const src = it.sources > 1 ? ` · ${it.sources} nguồn` : "";
-            sub = `${human(it.downloaded)} / ${human(it.size)} · ${human(it.speed)}/s${left ? " · còn " + left : ""} · ${it.connections} kết nối${src}`;
+            const nets = it.links > 1 ? ` · ${it.links} đường mạng` : "";
+            sub = `${human(it.downloaded)} / ${human(it.size)} · ${human(it.speed)}/s${left ? " · còn " + left : ""} · ${it.connections} kết nối${nets}${src}`;
           } else if (it.state === ERROR) {
             sub = it.error || "Tải thất bại";
           } else if (it.state === DONE) {
@@ -585,6 +604,30 @@
       $("classify").addEventListener("change", () =>
         call("set_classify", { on: $("classify").checked }).then((on) => ($("classify").checked = !!on)).catch(() => {})
       );
+      $("netMerge").addEventListener("change", () =>
+        call("set_net_merge", { on: $("netMerge").checked }).then((d) => { $("netMerge").checked = !!d.on; renderNet(d.net); }).catch(() => {})
+      );
+
+      // net-merge: each link with what it carries, or its state while it carries nothing.
+      const NET_STATE = { idle: "Sẵn sàng", checking: "Đang kiểm tra…", up: "Đang chạy", down: "Không có internet" };
+      function renderNet(net) {
+        const box = $("nets");
+        if (!net || !$("netMerge").checked) { box.replaceChildren(); return; }
+        const rows = net.links.map((l) => {
+          const name = l.label === l.name ? l.label : `${l.label} (${l.name})`;
+          const state = l.connections ? `${l.connections} kết nối · ${human(l.speed)}/s` : NET_STATE[l.state] || l.state;
+          return `<div class="net"><span class="net-name">${esc(name)}${l.primary ? '<span class="badge-merge">mặc định</span>' : ""}</span><span class="net-state ${esc(l.state)}">${esc(state)}</span></div>`;
+        });
+        const note = net.paused
+          ? "VPN đang chở toàn bộ lưu lượng nên không gộp: lượt tải đi qua VPN như trước."
+          : !net.links.length
+            ? "Không tìm thấy đường mạng nào."
+            : net.links.length === 1
+              ? "Mới có một đường mạng. Cắm điện thoại qua USB và bật Điểm truy cập cá nhân, hoặc cắm cáp Ethernet, để thêm một đường."
+              : "";
+        box.innerHTML = rows.join("") + (note ? `<p class="hint">${esc(note)}</p>` : "");
+      }
+
       $("autostart").addEventListener("change", () =>
         call("set_autostart", { on: $("autostart").checked }).then((on) => ($("autostart").checked = !!on)).catch(() => {})
       );
@@ -615,9 +658,11 @@
           $("folder").value = d.settings.download_dir;
           $("autostart").checked = d.autostart;
           $("classify").checked = d.settings.classify;
+          $("netMerge").checked = !!d.settings.net_merge;
           $("extPath").value = d.extension_dir;
         },
         list: render,
+        net: renderNet,
         toast,
         update(d) {
           $("bannerTxt").innerHTML = `Có bản <b>Lanes ${esc(d.latest)}</b>. Bạn đang dùng ${esc(d.current)}.`;

@@ -216,8 +216,9 @@ fn headers_for<'a>(url: &str, origin: &str, headers: &'a [(String, String)]) -> 
     headers.iter().filter(move |(name, _)| same_host || !name.eq_ignore_ascii_case("cookie"))
 }
 
-fn get(url: &str, origin: &str, headers: &[(String, String)]) -> Result<ureq::Response, String> {
-    let mut request = crate::engine::agent().get(url);
+/// One request; with net-merge (`proxy`) its connection goes through the app's proxy.
+fn get(url: &str, origin: &str, headers: &[(String, String)], proxy: Option<&str>) -> Result<ureq::Response, String> {
+    let mut request = crate::engine::agent(proxy).get(url);
     for (name, value) in headers_for(url, origin, headers) {
         request = request.set(name, value);
     }
@@ -229,12 +230,12 @@ fn get(url: &str, origin: &str, headers: &[(String, String)]) -> Result<ureq::Re
 }
 
 /// A reader over one segment, key or init part of the playlist at `origin`, or over its byte range.
-pub fn open(url: &str, range: Option<(u64, u64)>, origin: &str, headers: &[(String, String)]) -> Result<Box<dyn Read + Send>, String> {
+pub fn open(url: &str, range: Option<(u64, u64)>, origin: &str, headers: &[(String, String)], proxy: Option<&str>) -> Result<Box<dyn Read + Send>, String> {
     let mut extra = headers.to_vec();
     if let Some((offset, length)) = range.filter(|&(_, length)| length > 0) {
         extra.push(("Range".into(), format!("bytes={offset}-{}", offset + length - 1)));
     }
-    let response = get(url, origin, &extra)?;
+    let response = get(url, origin, &extra, proxy)?;
     // A server that ignores the range sends the whole file, which must not be taken for the segment.
     if range.is_some() && response.status() != 206 {
         return Err("Máy chủ không hỗ trợ tải theo đoạn".into());
@@ -244,7 +245,7 @@ pub fn open(url: &str, range: Option<(u64, u64)>, origin: &str, headers: &[(Stri
 
 /// A playlist's address after redirects, and its text.
 fn fetch(url: &str, origin: &str, headers: &[(String, String)]) -> Result<(String, String), String> {
-    let response = get(url, origin, headers)?;
+    let response = get(url, origin, headers, None)?;
     let base = response.get_url().to_owned();
     let mut text = String::new();
     response.into_reader().take(MAX_PLAYLIST).read_to_string(&mut text).map_err(|e| format!("Không đọc được danh sách HLS: {e}"))?;

@@ -30,7 +30,8 @@ bar, and is in English and Vietnamese.
 ## Features
 
 - **Many connections per file.** Each file is split into equal ranges, up to 32 connections, each writing directly
-  into the final file at its offset. No slow join step at the end.
+  into the final file at its offset. No slow join step at the end. A connection that finishes its range takes over
+  the second half of the largest one left, as IDM does, so a slow connection never holds up the end of the file.
 - **Resume.** Progress is saved to a sidecar a few times a minute; after a crash, a power cut or a quit, the download
   carries on from where it stopped. The server is asked for the same file by its ETag, so a changed file restarts
   rather than mixing old and new bytes.
@@ -52,10 +53,20 @@ bar, and is in English and Vietnamese.
   `brew install yt-dlp`. On Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. The ffmpeg that joins a video to
   its sound (720p to 4K) comes inside Lanes: a 4 MB LGPL build of FFmpeg that only joins streams, made by
   `scripts/build-ffmpeg.sh` from the FFmpeg source.
-- **net-merge (beta).** Paste several mirror URLs of one file and Lanes spreads the segments across them, merging
-  their bandwidth. A mirror that disagrees on the size or allows no ranges is dropped, and each segment moves to the
-  next mirror when one fails. (Lanes' net-merge is multi-source merging; it is unrelated to the NetMerge
-  network-bonding tools.)
+- **net-merge: every network link at once.** With the switch in Settings on, the connections of a download are spread
+  over every network link of the computer (Wi-Fi, Ethernet, a phone on USB with its hotspot on), as
+  [net-merge](https://github.com/net-merge/net-merge) does, so one file comes at the speeds of all of them added up:
+  plain files range by range, HLS segment by segment, and yt-dlp pages eight pieces at a time. It needs no
+  administrator: Lanes' own connections go through a proxy of Lanes on 127.0.0.1 that asks for a password made at
+  random, and each leaves by the link it is given; nothing else on the computer changes. The first connection of a
+  download to each site takes the system's usual link, another link serves a site only once the system's curl has
+  reached that site over it with a certificate it accepts (a network whose firewall replaces the certificates of some
+  sites is caught there), a link that fails a site keeps away from it for a while, and a link without internet gets
+  nothing. YouTube signs its video addresses for one public address, so its pieces stay on one link. While a VPN
+  carries all traffic nothing is merged. Settings lists the links with what each one carries.
+- **net-merge (beta): several mirrors.** Paste several mirror URLs of one file and Lanes spreads the segments across
+  them, merging their bandwidth. A mirror that disagrees on the size or allows no ranges is dropped, and each segment
+  moves to the next mirror when one fails.
 - **Pause, resume, speed and ETA** for every download, live.
 - **Categories as in IDM.** Files go into `Compressed`, `Documents`, `Music`, `Programs` and `Video` inside the
   download folder by their extension (IDM's lists, plus dmg and pkg as programs); anything else stays in the folder
@@ -113,7 +124,11 @@ Rust 1.85 or later.
 ## How it works
 
 - `src/engine.rs` — the download engine: probing for size and range support, planning equal segments, one connection
-  per segment with positioned writes, the resume sidecar, and retries.
+  per segment with positioned writes, a finished connection taking over half of the largest segment left, the resume
+  sidecar, and retries.
+- `src/netmerge.rs` — net-merge: the links of the computer, connections pinned to one (`IP_BOUND_IF` on macOS, the
+  source address on Windows), the SOCKS5 proxy, the weights from the speeds seen, the probes and the checks of a link
+  for a site. The same file is figghost's `crates/core-netmerge/src/lib.rs`.
 - `src/hls.rs` — HLS playlists: resolutions of a master, segments, keys and byte ranges of a media playlist, and
   AES-128 decryption.
 - `src/ytdlp.rs` — video pages through yt-dlp: the formats as menu choices, and the download with its progress.
@@ -129,8 +144,13 @@ Rust 1.85 or later.
 
 The download list and settings live in `~/Library/Application Support/Lanes` (macOS) or `%APPDATA%\Lanes` (Windows).
 Lanes talks to the servers you download from and to GitHub for the update check; the browser extension sends a job
-only to the local app, never over the network.
+only to the local app, never over the network. With net-merge on, and only while a download runs, Lanes now and then
+opens a TCP connection to 1.1.1.1 and 8.8.8.8 on port 443 over each link, sending nothing, to know which links reach
+the internet, and runs the system's curl once per site and link to ask that site for its headers over it.
 
 ## Licence
 
 MIT. See [LICENSE](LICENSE). Lanes is an original program; it is not affiliated with any other download manager.
+
+`src/netmerge.rs` is the scheduler of [net-merge](https://github.com/net-merge/net-merge) written again in Rust,
+copyright 2026 Rohit Mahto, under the MIT License: see [NET-MERGE-LICENSE.txt](NET-MERGE-LICENSE.txt).

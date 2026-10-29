@@ -22,8 +22,11 @@ notify-rust = "4"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# The download engine: blocking HTTP with range requests, one connection per segment, on rustls.
-ureq = "2"
+# The download engine: blocking HTTP with range requests, one connection per segment, on rustls; with net-merge each
+# connection goes through the app's own SOCKS5 proxy (src/netmerge.rs).
+ureq = { version = "2", features = ["socks-proxy"] }
+# net-merge: a socket bound to one network link before it connects, with a time limit on connecting.
+socket2 = { version = "0.6", features = ["all"] }
 # The update check verifies the SHA-256 that GitHub publishes.
 sha2 = "0.10"
 # HLS video: segment addresses relative to their playlist (already in the tree through ureq), and the AES-128 that
@@ -40,8 +43,12 @@ png = "0.18"
 # Only the test that checks the extension id matches its key decodes base64.
 base64 = "0.22"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# net-merge: the interfaces and their addresses (getifaddrs).
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
 [build-dependencies]
 winresource = "0.1"

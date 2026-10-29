@@ -31,7 +31,8 @@ tiếng Việt.
 ## Tính năng
 
 - **Nhiều kết nối mỗi tệp.** Mỗi tệp được chia thành các đoạn bằng nhau, tối đa 32 kết nối, mỗi kết nối ghi thẳng vào
-  tệp đích tại vị trí của mình. Không có bước ghép chậm ở cuối.
+  tệp đích tại vị trí của mình. Không có bước ghép chậm ở cuối. Kết nối nào xong đoạn của mình thì nhận nửa sau của
+  đoạn còn lại nhiều nhất, như IDM, nên một kết nối chậm không giữ chân phần cuối của tệp.
 - **Tiếp tục tải.** Tiến độ được lưu vài lần mỗi phút; sau khi mất điện, treo máy hay thoát app, download tiếp tục từ
   chỗ đã dừng. App hỏi máy chủ đúng tệp cũ theo ETag, nên tệp đã đổi trên máy chủ sẽ tải lại thay vì trộn lẫn.
 - **Bắt download từ trình duyệt.** Tiện ích nhận download trình duyệt vừa tạo rồi gửi sang Lanes kèm Referer, Cookie,
@@ -52,9 +53,20 @@ tiếng Việt.
   `brew install yt-dlp`. Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. ffmpeg để ghép hình với tiếng (720p
   đến 4K) đã có sẵn trong Lanes: bản FFmpeg 4 MB giấy phép LGPL, chỉ ghép luồng, build từ mã nguồn FFmpeg bằng
   `scripts/build-ffmpeg.sh`.
-- **net-merge (beta).** Dán nhiều liên kết mirror của cùng một file, Lanes chia các đoạn cho từng nguồn và gộp băng
-  thông. Nguồn nào khác kích thước hoặc không cho tải theo đoạn sẽ bị bỏ; mỗi đoạn tự chuyển sang nguồn khác khi một
-  nguồn lỗi. (net-merge của Lanes là gộp nhiều nguồn tải, không liên quan tới các công cụ NetMerge gộp đường mạng.)
+- **net-merge: mọi đường mạng cùng lúc.** Bật công tắc trong Cài đặt, các kết nối của một lượt tải được chia ra mọi
+  đường mạng của máy (Wi-Fi, Ethernet, điện thoại cắm USB bật điểm truy cập), như
+  [net-merge](https://github.com/net-merge/net-merge), nên một tệp được tải bằng tổng tốc độ của các đường: tệp thường
+  theo từng đoạn, HLS theo từng phần, trang qua yt-dlp tám phần một lúc. Không cần quyền quản trị: chỉ kết nối của
+  Lanes đi qua một proxy của Lanes trên 127.0.0.1, proxy đòi một mật khẩu tạo ngẫu nhiên, và mỗi kết nối ra khỏi máy
+  bằng đường được giao; ngoài ra không thay đổi gì trên máy. Kết nối đầu tiên của một lượt tải tới mỗi trang đi đường
+  mạng thường dùng của hệ thống, một đường khác chỉ nhận một trang sau khi curl của hệ thống đã tới được trang đó qua
+  đường ấy với chứng chỉ nó chấp nhận (mạng có tường lửa thay chứng chỉ của vài trang bị phát hiện ở bước này), đường
+  nào làm hỏng kết nối với một trang thì tránh trang đó một thời gian, và đường không ra được internet thì không nhận
+  gì. YouTube ký địa chỉ video theo một địa chỉ công khai, nên các phần của nó ở trên một đường. Khi VPN chở toàn bộ
+  lưu lượng thì không gộp gì. Cài đặt liệt kê các đường mạng cùng lưu lượng của từng đường.
+- **net-merge (beta): nhiều mirror.** Dán nhiều liên kết mirror của cùng một file, Lanes chia các đoạn cho từng nguồn
+  và gộp băng thông. Nguồn nào khác kích thước hoặc không cho tải theo đoạn sẽ bị bỏ; mỗi đoạn tự chuyển sang nguồn
+  khác khi một nguồn lỗi.
 - **Tạm dừng, tiếp tục, tốc độ và thời gian còn lại** cho từng tệp, theo thời gian thực.
 - **Phân loại như IDM.** Tệp được lưu vào `Compressed`, `Documents`, `Music`, `Programs`, `Video` trong thư mục lưu
   theo đuôi tệp (danh sách của IDM, thêm dmg và pkg vào chương trình); tệp khác để ngay ở thư mục lưu. Tắt được bằng
@@ -111,7 +123,10 @@ Rust 1.85 trở lên.
 ## Cách hoạt động
 
 - `src/engine.rs` — engine tải: thăm dò kích thước và khả năng tải theo đoạn, chia đoạn bằng nhau, mỗi kết nối một
-  đoạn ghi theo vị trí, tệp đi kèm để resume, và thử lại khi lỗi.
+  đoạn ghi theo vị trí, kết nối xong việc nhận nửa đoạn còn lại nhiều nhất, tệp đi kèm để resume, và thử lại khi lỗi.
+- `src/netmerge.rs` — net-merge: các đường mạng của máy, kết nối gắn vào một đường (`IP_BOUND_IF` trên macOS, địa chỉ
+  nguồn trên Windows), proxy SOCKS5, trọng số theo tốc độ đo được, thăm dò internet và kiểm tra một đường với một
+  trang. Cùng một tệp với `crates/core-netmerge/src/lib.rs` của figghost.
 - `src/hls.rs` — danh sách HLS: các độ phân giải của bản chính, các đoạn, khóa và đoạn byte của một bản, và giải mã
   AES-128.
 - `src/ytdlp.rs` — trang video qua yt-dlp: các định dạng thành lựa chọn trong menu, và việc tải cùng tiến độ.
@@ -126,8 +141,13 @@ Rust 1.85 trở lên.
 
 Danh sách tải và cài đặt nằm trong `~/Library/Application Support/Lanes` (macOS) hoặc `%APPDATA%\Lanes` (Windows).
 Lanes chỉ kết nối tới máy chủ bạn tải và tới GitHub để kiểm tra cập nhật; tiện ích trình duyệt chỉ gửi việc tới app
-trên máy, không gửi ra mạng.
+trên máy, không gửi ra mạng. Khi bật net-merge, và chỉ trong lúc có lượt tải, Lanes thỉnh thoảng mở một kết nối TCP
+tới 1.1.1.1 và 8.8.8.8 cổng 443 qua từng đường mạng, không gửi gì, để biết đường nào ra được internet, và chạy curl
+của hệ thống một lần cho mỗi cặp trang và đường mạng để hỏi phần đầu của trang đó qua đường ấy.
 
 ## Giấy phép
 
 MIT. Xem [LICENSE](LICENSE). Lanes là chương trình độc lập, không liên kết với bất kỳ trình quản lý tải xuống nào khác.
+
+`src/netmerge.rs` là bộ lập lịch của [net-merge](https://github.com/net-merge/net-merge) viết lại bằng Rust, bản
+quyền 2026 Rohit Mahto, theo giấy phép MIT: xem [NET-MERGE-LICENSE.txt](NET-MERGE-LICENSE.txt).

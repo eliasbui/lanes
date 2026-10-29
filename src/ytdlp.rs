@@ -229,11 +229,12 @@ pub fn valid_format(format: &str) -> bool {
 
 /// Downloads `format` of the page at `url` into `final_path`, its pieces kept in `temp` so a resume carries on from
 /// them. `progress` gets the bytes so far, over every piece; `stop` is asked a few times a second and kills yt-dlp
-/// when it says so. Gives the file's size.
+/// when it says so. With net-merge, `proxy` is the app's proxy, which gives each connection to a network link. Gives
+/// the file's size.
 ///
 /// yt-dlp's end is its exit, not the end of its output: a process started alongside it (another download's yt-dlp, its
 /// ffmpeg) can hold the output pipe open after it is gone, so the readers run on their own and are not waited for.
-pub fn download(url: &str, format: &str, final_path: &Path, temp: &Path, progress: impl Fn(u64), stop: impl Fn() -> bool) -> Result<u64, String> {
+pub fn download(url: &str, format: &str, final_path: &Path, temp: &Path, proxy: Option<&str>, progress: impl Fn(u64), stop: impl Fn() -> bool) -> Result<u64, String> {
     let (Some(home), Some(name)) = (final_path.parent(), final_path.file_name()) else {
         return Err("Đường dẫn lưu không hợp lệ".into());
     };
@@ -244,6 +245,7 @@ pub fn download(url: &str, format: &str, final_path: &Path, temp: &Path, progres
     if let Some(ffmpeg) = ffmpeg() {
         command.arg("--ffmpeg-location").arg(ffmpeg);
     }
+    command.args(net_merge(proxy));
     // The name is taken as written: `%` would start one of yt-dlp's template fields.
     command.arg("-P").arg(format!("home:{}", home.display())).arg("-P").arg(format!("temp:{}", temp.display()));
     command.arg("-o").arg(name.to_string_lossy().replace('%', "%%")).arg("--").arg(url);
@@ -291,6 +293,14 @@ pub fn download(url: &str, format: &str, final_path: &Path, temp: &Path, progres
             Err(error_of(&errors, &format!("yt-dlp dừng với mã {}", status.code().unwrap_or(-1))))
         }
     }
+}
+
+/// What net-merge adds to a download: the proxy, and a video in pieces (DASH, HLS, and YouTube's files cut into pieces
+/// of 10 MiB by `dashy`, which keeps their format ids) eight at a time, each on a connection the proxy gives to a link.
+/// A piece that cannot be had fails the download rather than leave a hole in the video.
+fn net_merge(proxy: Option<&str>) -> Vec<String> {
+    let Some(proxy) = proxy else { return Vec::new() };
+    ["--proxy", proxy, "--concurrent-fragments", "8", "--extractor-args", "youtube:formats=dashy", "--abort-on-unavailable-fragments"].map(str::to_owned).into()
 }
 
 /// The bytes downloaded across the pieces yt-dlp fetches one after the other (the video, then the sound), from its
@@ -383,6 +393,17 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"two");
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no part file is left behind");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn net_merge_sends_yt_dlp_through_the_proxy_in_pieces_and_nothing_without_it() {
+        assert!(net_merge(None).is_empty());
+        let args = net_merge(Some("socks5h://lanes1:t@127.0.0.1:9"));
+        let after = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].as_str());
+        assert_eq!(after("--proxy"), Some("socks5h://lanes1:t@127.0.0.1:9"));
+        assert_eq!(after("--concurrent-fragments"), Some("8"));
+        assert_eq!(after("--extractor-args"), Some("youtube:formats=dashy"));
+        assert!(args.iter().any(|a| a == "--abort-on-unavailable-fragments"));
     }
 
     #[test]

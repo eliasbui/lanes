@@ -7,11 +7,11 @@
 //! the same file by its ETag or modification time, so a file that changed on the server restarts instead of mixing
 //! old and new bytes.
 //!
-//! Static equal segments, split once at the start.
-//! ponytail: equal split, add IDM-style "split the largest remaining segment when a connection goes idle" when the
-//! speed-up over a plain equal split is worth the extra bookkeeping.
+//! The file starts as equal segments, one connection each. A connection that finishes its own takes over the second
+//! half of what is left of the largest one, as IDM does, so a fast connection, or a fast network link with net-merge,
+//! keeps working while a slow one would otherwise hold up the end of the file.
 
-use crate::{hls, ytdlp};
+use crate::{hls, netmerge, ytdlp};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
@@ -99,6 +99,60 @@ impl Meta {
     pub fn done(&self) -> u64 {
         self.segments.iter().map(|s| s.done).sum()
     }
+}
+
+/// The end of a part of unknown length, which is read to EOF and never split.
+const OPEN_END: u64 = u64::MAX;
+
+/// A segment being fetched, shared by its connection and the one that may take over its second half: `end` (inclusive)
+/// comes down when that happens, and the connection stops there.
+struct Part {
+    start: u64,
+    end: AtomicU64,
+    done: AtomicU64,
+}
+
+impl Part {
+    fn new(segment: &Segment) -> Arc<Part> {
+        Arc::new(Part { start: segment.start, end: AtomicU64::new(segment.end.unwrap_or(OPEN_END)), done: AtomicU64::new(segment.done) })
+    }
+
+    /// A connection that shows in the count while a playlist or yt-dlp does the work.
+    fn idle() -> Arc<Part> {
+        Part::new(&Segment { start: 0, end: None, done: 0 })
+    }
+
+    /// The bytes still to fetch, or `None` for a part of unknown length.
+    fn left(&self) -> Option<u64> {
+        let end = self.end.load(Ordering::SeqCst);
+        (end != OPEN_END).then(|| (end + 1).saturating_sub(self.start + self.done.load(Ordering::Relaxed)))
+    }
+
+    fn finished(&self) -> bool {
+        self.left() == Some(0)
+    }
+
+    fn segment(&self) -> Segment {
+        let end = self.end.load(Ordering::SeqCst);
+        Segment { start: self.start, end: (end != OPEN_END).then_some(end), done: self.done.load(Ordering::Relaxed) }
+    }
+}
+
+/// For a connection that has finished its part: the second half of what is left of the part with the most left, as a
+/// new part with its index, or `None` when no part has enough left (two `MIN_PIECE`s) to be worth another connection.
+fn steal(parts: &Mutex<Vec<Arc<Part>>>) -> Option<(Arc<Part>, usize)> {
+    let mut parts = parts.lock().ok()?;
+    let (victim, left) = parts.iter().filter_map(|p| p.left().map(|left| (p, left))).max_by_key(|&(_, left)| left)?;
+    if left < 2 * MIN_PIECE {
+        return None;
+    }
+    let end = victim.end.load(Ordering::SeqCst);
+    // The half after the connection, at least a MIN_PIECE ahead of it, so it never gets there before it sees the new end.
+    let at = end + 1 - left / 2;
+    victim.end.store(at - 1, Ordering::SeqCst);
+    let part = Arc::new(Part { start: at, end: AtomicU64::new(end), done: AtomicU64::new(0) });
+    parts.push(part.clone());
+    Some((part, parts.len() - 1))
 }
 
 /// One whole-file segment, with no end for a file of unknown length so the connection reads to EOF.
@@ -290,11 +344,16 @@ pub struct Task {
     /// Referer, Cookie and User-Agent from the page, so a site that checks them serves the same file.
     headers: Vec<(String, String)>,
     kind: Kind,
+    /// The name net-merge knows the download by, and its proxy for ureq (`socks5`) and for yt-dlp (`socks5h`); `None`
+    /// without net-merge.
+    job: String,
+    via: Option<String>,
+    via_ytdlp: Option<String>,
     state: AtomicU8,
     downloaded: AtomicU64,
     total: AtomicU64,
     error: Mutex<String>,
-    segments: Mutex<Vec<Arc<AtomicU64>>>,
+    segments: Mutex<Vec<Arc<Part>>>,
     meta: Mutex<Meta>,
 }
 
@@ -310,6 +369,8 @@ pub struct Snapshot {
     pub connections: usize,
     /// How many mirror sources are in use (net-merge beta); 1 for an ordinary download.
     pub sources: usize,
+    /// How many network links carry its connections now (net-merge).
+    pub links: usize,
     pub error: String,
 }
 
@@ -325,8 +386,9 @@ impl Task {
                 n => Some(n),
             },
             downloaded: self.downloaded.load(Ordering::Relaxed),
-            connections: self.segments.lock().map(|s| s.len()).unwrap_or(0),
+            connections: self.segments.lock().map(|s| s.iter().filter(|p| !p.finished()).count()).unwrap_or(0),
             sources: self.sources.lock().map(|s| s.len().max(1)).unwrap_or(1),
+            links: 0,
             error: self.error.lock().map(|e| e.clone()).unwrap_or_default(),
         }
     }
@@ -348,11 +410,42 @@ impl Task {
 pub struct Engine {
     tasks: Mutex<Vec<Arc<Task>>>,
     connections: AtomicU64,
+    /// net-merge: whether a download that starts goes through it, and the proxy, there from the first such download
+    /// until none runs. Locked before `tasks` wherever both are.
+    net_merge: AtomicBool,
+    merge: Mutex<Option<netmerge::Merge>>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Engine { tasks: Mutex::new(Vec::new()), connections: AtomicU64::new(DEFAULT_CONNECTIONS as u64) }
+        Engine {
+            tasks: Mutex::new(Vec::new()),
+            connections: AtomicU64::new(DEFAULT_CONNECTIONS as u64),
+            net_merge: AtomicBool::new(false),
+            merge: Mutex::new(None),
+        }
+    }
+
+    /// Whether downloads started from now on spread their connections over every network link.
+    pub fn set_net_merge(&self, on: bool) {
+        self.net_merge.store(on, Ordering::Relaxed);
+    }
+
+    /// The links as net-merge sees them: live while a download goes through it, else as they are found.
+    pub fn net_stats(&self) -> netmerge::Stats {
+        match self.merge.lock().ok().as_deref().and_then(Option::as_ref) {
+            Some(merge) => merge.stats(),
+            None => netmerge::idle_stats(),
+        }
+    }
+
+    /// Lets the proxy go once no download runs; the next download through net-merge starts it again.
+    pub fn release_idle(&self) {
+        let Ok(mut merge) = self.merge.lock() else { return };
+        let running = self.tasks.lock().map(|t| t.iter().any(|t| !t.paused_or_removed())).unwrap_or(true);
+        if merge.is_some() && !running {
+            *merge = None;
+        }
     }
 
     pub fn set_connections(&self, n: usize) {
@@ -369,6 +462,17 @@ impl Engine {
     pub fn start(self: &Arc<Self>, id: i64, sources: Vec<String>, final_path: PathBuf, headers: Vec<(String, String)>, kind: Kind) {
         let url = sources.first().cloned().unwrap_or_default();
         let resume = load_meta(&final_path).filter(|m| m.url == url);
+        // Held until the task is listed, so that `release_idle` cannot drop the proxy it is given.
+        let mut merge = self.merge.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.net_merge.load(Ordering::Relaxed) && merge.is_none() {
+            match netmerge::Merge::start() {
+                Ok(started) => *merge = Some(started),
+                Err(e) => eprintln!("net-merge did not start: {e}"),
+            }
+        }
+        let job = format!("lanes{id}");
+        let via = |scheme| merge.as_ref().filter(|_| self.net_merge.load(Ordering::Relaxed)).map(|m| m.proxy_url(scheme, &job));
+        let (via, via_ytdlp) = (via("socks5"), via("socks5h"));
         let task = Arc::new(Task {
             id,
             url: url.clone(),
@@ -376,6 +480,9 @@ impl Engine {
             sources: Mutex::new(sources),
             headers,
             kind,
+            job,
+            via,
+            via_ytdlp,
             state: AtomicU8::new(state::RUNNING),
             downloaded: AtomicU64::new(resume.as_ref().map(Meta::done).unwrap_or(0)),
             total: AtomicU64::new(resume.as_ref().and_then(|m| m.size).unwrap_or(0)),
@@ -394,6 +501,7 @@ impl Engine {
             tasks.retain(|t| t.id != id);
             tasks.push(task.clone());
         }
+        drop(merge);
         let engine = self.clone();
         thread::spawn(move || engine.run(task, resume));
     }
@@ -422,7 +530,13 @@ impl Engine {
     }
 
     pub fn snapshots(&self) -> Vec<Snapshot> {
-        self.tasks.lock().map(|t| t.iter().map(|t| t.snapshot()).collect()).unwrap_or_default()
+        let merge = self.merge.lock();
+        let merge = merge.as_ref().ok().and_then(|m| m.as_ref());
+        let tasks = self.tasks.lock().map(|t| t.clone()).unwrap_or_default();
+        tasks
+            .iter()
+            .map(|t| Snapshot { links: merge.map_or(0, |m| m.links_used(&t.job)), ..t.snapshot() })
+            .collect()
     }
 
     fn find(&self, id: i64) -> Option<Arc<Task>> {
@@ -483,9 +597,9 @@ impl Engine {
             },
         };
 
-        let dones: Vec<Arc<AtomicU64>> = segments.iter().map(|s| Arc::new(AtomicU64::new(s.done))).collect();
+        let parts: Vec<Arc<Part>> = segments.iter().map(Part::new).collect();
         if let Ok(mut slot) = task.segments.lock() {
-            *slot = dones.clone();
+            *slot = parts.clone();
         }
         if let Ok(mut meta) = task.meta.lock() {
             *meta = Meta {
@@ -501,20 +615,32 @@ impl Engine {
         task.downloaded.store(segments.iter().map(|s| s.done).sum(), Ordering::Relaxed);
 
         let mut handles = Vec::new();
-        for (i, (segment, done)) in segments.iter().cloned().zip(dones.iter().cloned()).enumerate() {
+        // A resume leaves the parts that were finished alone: they are on disk, and each connection had one part.
+        for (i, part) in parts.iter().cloned().enumerate().filter(|(_, p)| !p.finished()) {
             let (task, file) = (task.clone(), file.clone());
-            // Each segment starts on a different mirror, so the sources are used in parallel from the first moment.
-            handles.push(thread::spawn(move || download_segment(&task, &file, segment, &done, i)));
+            handles.push(thread::spawn(move || {
+                // Each part starts on a different mirror, so the sources are used in parallel from the first moment.
+                let (mut part, mut i) = (part, i);
+                loop {
+                    if !download_segment(&task, &file, &part, i) {
+                        return false;
+                    }
+                    match steal(&task.segments) {
+                        Some((next, n)) => (part, i) = (next, n),
+                        None => return true,
+                    }
+                }
+            }));
         }
 
         // Save the sidecar while the connections run, so a crash still leaves a resumable file. The flag stops the
         // saver once the connections have joined; it cannot wait on the state, which is only set after this returns.
-        let saving = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let saving = Arc::new(AtomicBool::new(true));
         let saver = {
-            let (task, dones, saving) = (task.clone(), dones.clone(), saving.clone());
+            let (task, saving) = (task.clone(), saving.clone());
             thread::spawn(move || {
                 while saving.load(Ordering::Relaxed) {
-                    save_meta(&task, &dones);
+                    save_meta(&task);
                     for _ in 0..20 {
                         if !saving.load(Ordering::Relaxed) {
                             break;
@@ -522,7 +648,7 @@ impl Engine {
                         thread::sleep(SAVE_EVERY / 20);
                     }
                 }
-                save_meta(&task, &dones);
+                save_meta(&task);
             })
         };
 
@@ -564,7 +690,7 @@ impl Engine {
         let count = media.segments.len();
         let workers = self.connection_count().min(count);
         if let Ok(mut slot) = task.segments.lock() {
-            *slot = (0..workers).map(|_| Arc::new(AtomicU64::new(0))).collect();
+            *slot = (0..workers).map(|_| Part::idle()).collect();
         }
         task.downloaded.store(0, Ordering::Relaxed);
         let keys = Mutex::new(HashMap::new());
@@ -625,10 +751,10 @@ fn run_page(task: &Task, format: &str) {
         return task.set_error(format!("Không tạo được thư mục tạm: {e}"));
     }
     if let Ok(mut slot) = task.segments.lock() {
-        *slot = vec![Arc::new(AtomicU64::new(0))];
+        *slot = vec![Part::idle()];
     }
     let progress = |done| task.downloaded.store(done, Ordering::Relaxed);
-    match ytdlp::download(&task.url, format, &task.final_path, &folder, progress, || task.paused_or_removed()) {
+    match ytdlp::download(&task.url, format, &task.final_path, &folder, task.via_ytdlp.as_deref(), progress, || task.paused_or_removed()) {
         Ok(size) => {
             task.total.store(size, Ordering::Relaxed);
             task.downloaded.store(size, Ordering::Relaxed);
@@ -691,7 +817,7 @@ fn keep_part(task: &Task, segment: &hls::Segment, path: &Path, keys: &Mutex<Hash
 
 /// The body of one HLS part, counted into the progress as it arrives; what was counted is taken back on a failure.
 fn fetch_counted(task: &Task, segment: &hls::Segment) -> Result<Vec<u8>, String> {
-    let mut reader = hls::open(&segment.url, segment.range, &task.url, &task.headers)?;
+    let mut reader = hls::open(&segment.url, segment.range, &task.url, &task.headers, task.via.as_deref())?;
     let mut body = Vec::new();
     let mut buf = vec![0u8; CHUNK];
     let result = loop {
@@ -721,7 +847,7 @@ fn key_bytes(task: &Task, url: &str, keys: &Mutex<HashMap<String, Vec<u8>>>) -> 
         return Ok(key.clone());
     }
     let mut key = Vec::new();
-    hls::open(url, None, &task.url, &task.headers)?.take(64).read_to_end(&mut key).map_err(|e| format!("Không tải được khóa giải mã: {e}"))?;
+    hls::open(url, None, &task.url, &task.headers, task.via.as_deref())?.take(64).read_to_end(&mut key).map_err(|e| format!("Không tải được khóa giải mã: {e}"))?;
     keys.insert(url.to_owned(), key.clone());
     Ok(key)
 }
@@ -761,30 +887,28 @@ fn finish(file: &fs::File, part: &Path, final_path: &Path, size: Option<u64>) ->
     fs::rename(part, final_path).map_err(|e| format!("Không đổi tên được tệp: {e}"))
 }
 
-/// One connection: fetches its byte range from where it left off, writing each chunk straight to its offset. It
-/// returns whether the range is complete; a pause or a removal ends it early without an error. With net-merge it
-/// starts on the mirror `source_start` and moves to the next mirror each time one fails, so a dead mirror never
-/// strands a segment while others are alive.
-fn download_segment(task: &Task, file: &fs::File, segment: Segment, done: &AtomicU64, source_start: usize) -> bool {
+/// One connection: fetches its part from where it left off, writing each chunk straight to its offset, up to the end of
+/// the part as it stands, which comes down when another connection takes over its second half. It returns whether the
+/// part is complete; a pause or a removal ends it early without an error. With mirrors (net-merge beta) it starts on
+/// the mirror `source_start` and moves to the next mirror each time one fails, so a dead mirror never strands a part
+/// while others are alive.
+fn download_segment(task: &Task, file: &fs::File, part: &Part, source_start: usize) -> bool {
     let sources = task.sources.lock().map(|s| s.clone()).unwrap_or_default();
     let sources = if sources.is_empty() { vec![task.url.clone()] } else { sources };
     let mut si = source_start % sources.len();
-    let len = segment.end.map(|end| end + 1 - segment.start);
     let mut attempt = 0;
     loop {
         if task.paused_or_removed() {
             return false;
         }
-        let already = done.load(Ordering::Relaxed);
-        if len.is_some_and(|len| already >= len) {
+        if part.finished() {
             return true;
         }
-        let from = segment.start + already;
-        let range = match segment.end {
-            Some(end) => format!("bytes={from}-{end}"),
-            None => format!("bytes={from}-"),
-        };
-        match fetch_range(&sources[si], &range, segment.end.is_some(), &task.headers) {
+        let from = part.start + part.done.load(Ordering::Relaxed);
+        let end = part.end.load(Ordering::SeqCst);
+        let bounded = end != OPEN_END;
+        let range = if bounded { format!("bytes={from}-{end}") } else { format!("bytes={from}-") };
+        match fetch_range(&sources[si], &range, bounded, &task.headers, task.via.as_deref()) {
             Ok(mut reader) => {
                 let mut buf = vec![0u8; CHUNK];
                 let mut offset = from;
@@ -792,21 +916,27 @@ fn download_segment(task: &Task, file: &fs::File, segment: Segment, done: &Atomi
                     if task.paused_or_removed() {
                         return false;
                     }
+                    // Another connection may have taken over the end of the part: what lies past the new end is its.
+                    let end = part.end.load(Ordering::SeqCst);
+                    if offset > end {
+                        break;
+                    }
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
+                            let n = (n as u64).min((end - offset).saturating_add(1)) as usize;
                             if let Err(e) = write_at(file, offset, &buf[..n]) {
                                 task.set_error(format!("Không ghi được tệp: {e}"));
                                 return false;
                             }
                             offset += n as u64;
-                            done.fetch_add(n as u64, Ordering::Relaxed);
+                            part.done.fetch_add(n as u64, Ordering::Relaxed);
                             task.downloaded.fetch_add(n as u64, Ordering::Relaxed);
                         }
                         Err(_) => break,
                     }
                 }
-                if len.is_none_or(|len| done.load(Ordering::Relaxed) >= len) {
+                if !bounded || part.finished() {
                     return true;
                 }
                 // Short read: the connection dropped before the range was done, so it is retried from the new point.
@@ -835,18 +965,19 @@ fn download_segment(task: &Task, file: &fs::File, segment: Segment, done: &Atomi
     }
 }
 
-pub(crate) fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(SECONDS))
-        .timeout_read(Duration::from_secs(SECONDS))
-        .redirects(10)
-        .build()
+/// An agent of its own for each request; with net-merge its connections go through `proxy`, which gives each to a link.
+pub(crate) fn agent(proxy: Option<&str>) -> ureq::Agent {
+    let mut builder = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(SECONDS)).timeout_read(Duration::from_secs(SECONDS)).redirects(10);
+    if let Some(proxy) = proxy.and_then(|p| ureq::Proxy::new(p).ok()) {
+        builder = builder.proxy(proxy);
+    }
+    builder.build()
 }
 
 /// Opens a reader over one byte range. `identity` is asked for so a range maps to the same bytes on disk, and a
 /// server that ignores the range (a 200 for a range request) is refused rather than written at the wrong place.
-fn fetch_range(url: &str, range: &str, expect_partial: bool, headers: &[(String, String)]) -> Result<Box<dyn Read + Send>, String> {
-    let mut request = agent().get(url).set("Range", range).set("Accept-Encoding", "identity");
+fn fetch_range(url: &str, range: &str, expect_partial: bool, headers: &[(String, String)], proxy: Option<&str>) -> Result<Box<dyn Read + Send>, String> {
+    let mut request = agent(proxy).get(url).set("Range", range).set("Accept-Encoding", "identity");
     for (name, value) in headers {
         request = request.set(name, value);
     }
@@ -864,7 +995,7 @@ fn fetch_range(url: &str, range: &str, expect_partial: bool, headers: &[(String,
 /// Asks for the first byte to learn the size, whether ranges work, the name and the file's tag, without pulling
 /// the file. A 206 answer proves ranges work and carries the total in Content-Range.
 pub fn probe(url: &str, headers: &[(String, String)]) -> Result<Probe, String> {
-    let mut request = agent().get(url).set("Range", "bytes=0-0").set("Accept-Encoding", "identity");
+    let mut request = agent(None).get(url).set("Range", "bytes=0-0").set("Accept-Encoding", "identity");
     for (name, value) in headers {
         request = request.set(name, value);
     }
@@ -909,12 +1040,11 @@ fn load_meta(final_path: &Path) -> Option<Meta> {
     serde_json::from_str(&text).ok()
 }
 
-/// Writes the sidecar for a resume, copying each connection's live progress into the saved segments.
-fn save_meta(task: &Task, dones: &[Arc<AtomicU64>]) {
+/// Writes the sidecar for a resume: every part as it stands, with the ones split off by connections that finished.
+fn save_meta(task: &Task) {
+    let parts: Vec<Segment> = task.segments.lock().map(|p| p.iter().map(|p| p.segment()).collect()).unwrap_or_default();
     let Ok(mut meta) = task.meta.lock() else { return };
-    for (segment, done) in meta.segments.iter_mut().zip(dones) {
-        segment.done = done.load(Ordering::Relaxed);
-    }
+    meta.segments = parts;
     if let Ok(text) = serde_json::to_string(&*meta) {
         let target = meta_of(&task.final_path);
         let tmp = target.with_extension("meta.tmp");
@@ -952,6 +1082,115 @@ mod tests {
         let stream = plan_segments(0, 8, 1);
         assert_eq!(stream.len(), 1);
         assert_eq!(stream[0].end, None);
+    }
+
+    /// The parts of a table that have an end, in order: they must cover the file once, without a gap or an overlap.
+    fn covered(parts: &Mutex<Vec<Arc<Part>>>) -> Vec<(u64, u64)> {
+        let mut ranges: Vec<(u64, u64)> = parts.lock().unwrap().iter().filter_map(|p| p.segment().end.map(|end| (p.start, end))).collect();
+        ranges.sort();
+        for pair in ranges.windows(2) {
+            assert_eq!(pair[0].1 + 1, pair[1].0, "{ranges:?}");
+        }
+        ranges
+    }
+
+    #[test]
+    fn a_finished_connection_takes_the_second_half_of_the_largest_part_left() {
+        let mib = MIN_PIECE;
+        let parts = Mutex::new(vec![
+            Part::new(&Segment { start: 0, end: Some(10 * mib - 1), done: 2 * mib }),
+            Part::new(&Segment { start: 10 * mib, end: Some(12 * mib - 1), done: 2 * mib }),
+            Part::new(&Segment { start: 0, end: None, done: 5 }),
+        ]);
+        assert!(parts.lock().unwrap()[1].finished());
+        let (part, index) = steal(&parts).expect("8 MiB left is worth a connection of its own");
+        assert_eq!(index, 3);
+        assert_eq!(part.segment(), Segment { start: 6 * mib, end: Some(10 * mib - 1), done: 0 });
+        assert_eq!(parts.lock().unwrap()[0].segment().end, Some(6 * mib - 1), "the first now stops where it starts");
+        assert_eq!(parts.lock().unwrap()[2].segment().end, None, "a stream of unknown length is never split");
+        // 4 MiB left in two parts: one of them is split again, and the file is still covered once.
+        let (again, _) = steal(&parts).unwrap();
+        assert_eq!(again.left(), Some(2 * mib));
+        let ranges = covered(&parts);
+        assert_eq!((ranges[0].0, ranges.last().unwrap().1), (0, 12 * mib - 1));
+        // With less than two MIN_PIECEs left anywhere, no connection is added.
+        for p in parts.lock().unwrap().iter().filter(|p| p.left().is_some()) {
+            let len = p.end.load(Ordering::SeqCst) + 1 - p.start;
+            p.done.store(len.saturating_sub(mib), Ordering::Relaxed);
+        }
+        assert!(steal(&parts).is_none());
+    }
+
+    /// A server of one file that honours ranges, slowly for a range that starts at 0, so that the connection with the
+    /// first part is the slow one.
+    fn serve_ranges(body: Arc<Vec<u8>>) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}/file.bin", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let body = body.clone();
+                thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    let mut range = (0, body.len() - 1);
+                    while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                        if let Some(value) = line.to_ascii_lowercase().strip_prefix("range: bytes=") {
+                            let (from, to) = value.trim().split_once('-').unwrap();
+                            range = (from.parse().unwrap(), to.parse().unwrap_or(body.len() - 1).min(body.len() - 1));
+                        }
+                        line.clear();
+                    }
+                    let (from, to) = range;
+                    let mut stream = stream;
+                    let head = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {from}-{to}/{}\r\nConnection: close\r\n\r\n",
+                        to + 1 - from,
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    for chunk in body[from..=to].chunks(64 * 1024) {
+                        if from == 0 {
+                            thread::sleep(Duration::from_millis(20));
+                        }
+                        if stream.write_all(chunk).is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        base
+    }
+
+    /// The fast connection does not wait for the slow one: it takes over the second half of the slow part, and the file
+    /// is still whole, byte for byte.
+    #[test]
+    fn a_fast_connection_takes_over_from_a_slow_one_and_the_file_is_whole() {
+        let body: Arc<Vec<u8>> = Arc::new((0..8 * MIN_PIECE as usize).map(|i| (i * 7 % 251) as u8).collect());
+        let url = serve_ranges(body.clone());
+        let dir = std::env::temp_dir().join(format!("lanes-steal-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("file.bin");
+        let engine = Arc::new(Engine::new());
+        engine.set_connections(2);
+        engine.start(1, vec![url], path.clone(), Vec::new(), Kind::File);
+        loop {
+            let snap = engine.snapshots().into_iter().next().expect("the task is listed");
+            match snap.state {
+                state::DONE => break,
+                state::ERROR => panic!("download failed: {}", snap.error),
+                _ => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        assert!(fs::read(&path).unwrap() == *body, "the file is whole");
+        let task = engine.find(1).unwrap();
+        let parts = task.segments.lock().unwrap().len();
+        assert!(parts >= 3, "the fast connection took over part of the slow one: {parts} parts");
+        assert_eq!(covered(&task.segments).len(), parts);
+        assert!(!meta_of(&path).exists(), "the sidecar is gone with the download done");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -1160,6 +1399,53 @@ mod tests {
                 assert_eq!(&bytes[4..8], b"ftyp", "an MP4 starts with its ftyp box");
             }
         }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// net-merge over the links of this computer: a release of Lanes with eight connections spread over the links that
+    /// can reach GitHub, whole and matching its hash, printing what each link carried. `LANES_NET_URL` downloads another
+    /// file instead and checks only that it is whole. Run with `cargo test -- --ignored --nocapture net_merge_over`.
+    #[test]
+    #[ignore = "needs the network"]
+    fn net_merge_over_the_links_of_this_computer() {
+        use sha2::{Digest, Sha256};
+        let other = std::env::var("LANES_NET_URL").ok();
+        let url = other.clone().unwrap_or_else(|| "https://github.com/eliasbui/lanes/releases/download/v0.1.0/Lanes-0.1.0-macos.zip".into());
+        let dir = std::env::temp_dir().join(format!("lanes-netlinks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out");
+        let engine = Arc::new(Engine::new());
+        engine.set_connections(8);
+        // `LANES_NET_OFF` measures the same download without net-merge.
+        engine.set_net_merge(std::env::var_os("LANES_NET_OFF").is_none());
+        let started = std::time::Instant::now();
+        engine.start(1, vec![url.clone()], path.clone(), Vec::new(), Kind::File);
+        let mut most = 0;
+        let snap = loop {
+            let snap = engine.snapshots().into_iter().next().expect("the task is listed");
+            most = most.max(snap.links);
+            match snap.state {
+                state::DONE => break snap,
+                state::ERROR => panic!("download failed: {}", snap.error),
+                _ => thread::sleep(Duration::from_millis(100)),
+            }
+        };
+        let seconds = started.elapsed().as_secs_f64();
+        let size = fs::metadata(&path).unwrap().len();
+        eprintln!("{size} bytes in {seconds:.1} s, {:.1} MB/s, at most {most} links at once", size as f64 / seconds / 1e6);
+        for link in engine.net_stats().links {
+            eprintln!("{} ({}) {}: {:.1} MB", link.label, link.name, link.state, link.received as f64 / 1e6);
+        }
+        assert_eq!(Some(size), snap.size);
+        if other.is_none() {
+            let mut hasher = Sha256::new();
+            std::io::copy(&mut fs::File::open(&path).unwrap(), &mut hasher).unwrap();
+            let got: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(got, "bdbb3da3ce0dbb3cf0d7d73fafc4ee50fc168cf3350db98ed0f67e27ae5d2d7b");
+        }
+        engine.release_idle();
+        assert!(engine.merge.lock().unwrap().is_none(), "the proxy goes once nothing runs");
         fs::remove_dir_all(&dir).unwrap();
     }
 

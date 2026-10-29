@@ -5,6 +5,7 @@ mod autostart;
 mod browser;
 mod engine;
 mod hls;
+mod netmerge;
 mod store;
 mod ytdlp;
 mod update;
@@ -74,11 +75,13 @@ struct Settings {
     connections: usize,
     /// Files go into IDM's category folders inside the download folder (`engine::category`).
     classify: bool,
+    /// net-merge: the connections of a download are spread over every network link (src/netmerge.rs).
+    net_merge: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { download_dir: downloads_dir().to_string_lossy().into_owned(), connections: engine::DEFAULT_CONNECTIONS, classify: true }
+        Settings { download_dir: downloads_dir().to_string_lossy().into_owned(), connections: engine::DEFAULT_CONNECTIONS, classify: true, net_merge: false }
     }
 }
 
@@ -146,6 +149,7 @@ fn main() {
     let settings = Settings::load(&dir);
     let engine = Arc::new(Engine::new());
     engine.set_connections(settings.connections);
+    engine.set_net_merge(settings.net_merge);
     let background = std::env::args().any(|a| a == autostart::BACKGROUND);
     // Notifications come from Lanes. Left unset, the library looks for an app named "use_default" through AppleScript
     // before the first one, and macOS asks the user where that app is.
@@ -447,10 +451,14 @@ impl App {
         }
         // Forget the speed of anything no longer running.
         self.speeds.retain(|id, _| live.contains(id));
+        self.engine.release_idle();
         let items = self.items();
         browser::publish(&self.dir, &items, &mut self.published);
         if self.window.is_some() {
             self.post(&json!({ "event": "list", "data": items }));
+            if self.settings.net_merge {
+                self.post(&json!({ "event": "net", "data": net_json(&self.engine.net_stats()) }));
+            }
         }
     }
 
@@ -497,6 +505,7 @@ impl App {
                 "downloaded": downloaded,
                 "connections": snap.map(|s| s.connections).unwrap_or(0),
                 "sources": snap.map(|s| s.sources).unwrap_or(1),
+                "links": snap.map(|s| s.links).unwrap_or(0),
                 "speed": speed,
                 "error": snap.map(|s| s.error.clone()).filter(|e| !e.is_empty()).unwrap_or(row.error.clone()),
             }));
@@ -619,6 +628,13 @@ impl App {
                 self.settings.save(&self.dir);
                 reply(self, Ok(json!(self.settings.classify)));
             }
+            "set_net_merge" => {
+                self.settings.net_merge = args["on"].as_bool().unwrap_or(false);
+                self.engine.set_net_merge(self.settings.net_merge);
+                self.settings.save(&self.dir);
+                let net = self.settings.net_merge.then(|| net_json(&self.engine.net_stats()));
+                reply(self, Ok(json!({ "on": self.settings.net_merge, "net": net })));
+            }
             "choose_folder" => reply(self, choose_folder().map(|p| json!(p))),
             "set_autostart" => reply(self, autostart::set(args["on"].as_bool().unwrap_or(false)).map(|()| json!(autostart::enabled()))),
             "check_update" => {
@@ -673,6 +689,16 @@ impl App {
             let _ = proxy.send_event(UserEvent::Post(message));
         });
     }
+}
+
+/// The links of net-merge as the page shows them; the addresses stay here.
+fn net_json(stats: &netmerge::Stats) -> Value {
+    let links: Vec<Value> = stats
+        .links
+        .iter()
+        .map(|l| json!({ "name": l.name, "label": l.label, "state": l.state, "primary": l.primary, "connections": l.connections, "speed": l.speed }))
+        .collect();
+    json!({ "links": links, "paused": stats.paused && !stats.links.is_empty() })
 }
 
 /// Opens a folder picker and gives the chosen path, or None when the user cancels.
