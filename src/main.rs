@@ -228,6 +228,7 @@ fn main() {
         open_id: None,
         quit_id: None,
         speeds: HashMap::new(),
+        published: String::new(),
     };
     // Pick up where downloads that were running last time left off.
     app.resume_unfinished();
@@ -276,6 +277,8 @@ struct App {
     quit_id: Option<MenuId>,
     /// Per-download bytes-and-time of the last tick, to work out the speed.
     speeds: HashMap<i64, (u64, Instant)>,
+    /// The progress last written for the browser extension, so an unchanged list is not written again.
+    published: String,
 }
 
 impl App {
@@ -444,8 +447,10 @@ impl App {
         }
         // Forget the speed of anything no longer running.
         self.speeds.retain(|id, _| live.contains(id));
+        let items = self.items();
+        browser::publish(&self.dir, &items, &mut self.published);
         if self.window.is_some() {
-            self.push_list();
+            self.post(&json!({ "event": "list", "data": items }));
         }
     }
 
@@ -466,8 +471,13 @@ impl App {
         }
     }
 
-    /// The whole list as the page shows it: the stored facts, with the engine's live progress and a speed over it.
     fn push_list(&mut self) {
+        let items = self.items();
+        self.post(&json!({ "event": "list", "data": items }));
+    }
+
+    /// The whole list as the page shows it: the stored facts, with the engine's live progress and a speed over it.
+    fn items(&mut self) -> Vec<Value> {
         let rows = store::list(&self.db).unwrap_or_default();
         let snaps: HashMap<i64, engine::Snapshot> = self.engine.snapshots().into_iter().map(|s| (s.id, s)).collect();
         let mut items = Vec::new();
@@ -491,7 +501,7 @@ impl App {
                 "error": snap.map(|s| s.error.clone()).filter(|e| !e.is_empty()).unwrap_or(row.error.clone()),
             }));
         }
-        self.post(&json!({ "event": "list", "data": items }));
+        items
     }
 
     /// Bytes per second since the last tick for a running download, or 0.

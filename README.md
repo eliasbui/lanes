@@ -38,12 +38,16 @@ bar, and is in English and Vietnamese.
   Cookie and User-Agent of the page, which is what gets most "403 Forbidden" downloads through. Works in Chrome, Edge,
   Brave and Cốc Cốc; a right-click "Download with Lanes" is there too. If Lanes is not running, the extension starts
   it in the menu bar so the download begins at once.
-- **Video button.** Hover a video and a "Tải video" button with the Lanes mark appears under it, as in IDM (inside its bottom corner when the video reaches the bottom of the window); it lists what Lanes can download
-  for that video by resolution (1080p, 720p, ...) with the size or an estimate. Whole video files go through the
+- **Video button.** A round Lanes button sits in the top-right corner of a video while the pointer is over it, and
+  for a few seconds when the video starts playing; it lists what Lanes can download for that video by resolution (4K,
+  2K, 1080p, ...) with the size or an estimate. Whole video files go through the
   normal multi-connection engine; HLS streams (`.m3u8`) are fetched segment by segment in parallel, AES-128 included,
   resumable, and joined into one `.ts` or `.mp4`. YouTube, and pages where Lanes finds no stream of its own (DASH
   sites), go through yt-dlp: the menu lists every resolution up to 2160p plus sound only, and the picked one is
   downloaded and joined into an MP4. Not supported: live streams, and anything with DRM, which Lanes never touches.
+- **Progress in the browser.** What Lanes downloads shows in the browser too: the toolbar button carries the share
+  done, a dock in the corner of the page in front fills a ring per download and turns it into a tick when it is done
+  (with a button that shows the file in its folder), and the popup lists the latest downloads.
 - **yt-dlp** is needed for YouTube and the DASH sites; Lanes finds it where Homebrew or winget puts it. On macOS:
   `brew install yt-dlp`. On Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. The ffmpeg that joins a video to
   its sound (720p to 4K) comes inside Lanes: a 4 MB LGPL build of FFmpeg that only joins streams, made by

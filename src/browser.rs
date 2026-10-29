@@ -7,6 +7,9 @@
 //!
 //! The extension's files are carried in the app and written to the data folder at every start, so the copy the
 //! browser loads always matches the app.
+//!
+//! The extension also shows the downloads' progress in the browser. The running app writes its latest downloads to
+//! the data folder whenever they change (`publish`), and a host the extension keeps connected (`watch`) passes them on.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -26,6 +29,11 @@ const EXTENSION_ID: &str = "cpceimnjichdagbgnhbkcnciogbdahol";
 /// A download job is small; anything bigger is not from the extension.
 const MAX_MESSAGE: u32 = 64 * 1024;
 const INBOX: &str = "inbox.jsonl";
+/// The latest downloads as the extension shows them, and how many.
+const PROGRESS: &str = "progress.json";
+const RECENT: usize = 20;
+/// How often a connected extension is told of a change.
+const WATCH_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 const MAX_URL: usize = 4000;
 const MAX_HEADER: usize = 8000;
 /// The extension, as the browser loads it from `<data folder>/extension`.
@@ -133,9 +141,13 @@ pub fn write_message(output: &mut impl Write, message: &Value) -> io::Result<()>
     output.flush()
 }
 
-/// The app as the browser's host: one message in, one answer out.
+/// The app as the browser's host: one message in, one answer out, or the progress for as long as the extension
+/// keeps the port open when it asks to `watch`.
 pub fn host(dir: &Path) {
-    let answer = match read_message(&mut io::stdin().lock()) {
+    // Read before the match, which would otherwise hold stdin's lock for as long as `watch` runs.
+    let message = read_message(&mut io::stdin().lock());
+    let answer = match message {
+        Ok(message) if message["cmd"] == "watch" => return watch(dir),
         Ok(message) => answer(dir, &message),
         Err(e) => json!({ "ok": false, "error": format!("Lanes không đọc được yêu cầu, hãy cập nhật tiện ích ({e})") }),
     };
@@ -144,9 +156,58 @@ pub fn host(dir: &Path) {
     }
 }
 
+/// Writes the latest of the downloads the window lists for a connected extension, when they changed since `last`.
+pub fn publish(dir: &Path, items: &[Value], last: &mut String) {
+    let text = Value::from(&items[..items.len().min(RECENT)]).to_string();
+    if text != *last && fs::write(dir.join(PROGRESS), &text).is_ok() {
+        *last = text;
+    }
+}
+
+/// Sends the extension the latest downloads and whether the app is running, at once and then at each change, until
+/// the browser closes the port: its end of stdin closes, which ends the host even while nothing changes.
+fn watch(dir: &Path) {
+    std::thread::spawn(|| {
+        let _ = io::copy(&mut io::stdin(), &mut io::sink());
+        std::process::exit(0);
+    });
+    let mut last = Value::Null;
+    loop {
+        // A list read while the app writes it is half a list, and waits for the next round.
+        let list = match fs::read(dir.join(PROGRESS)) {
+            Ok(bytes) => serde_json::from_slice(&bytes).ok(),
+            Err(_) => Some(json!([])),
+        };
+        if let Some(list) = list {
+            let now = json!({ "event": "progress", "live": running(dir), "list": list, "version": env!("CARGO_PKG_VERSION") });
+            if now != last {
+                if write_message(&mut io::stdout().lock(), &now).is_err() {
+                    return;
+                }
+                last = now;
+            }
+        }
+        std::thread::sleep(WATCH_EVERY);
+    }
+}
+
+/// Shows a finished download in Finder or Explorer. Only one the progress lists, by its id, so the extension can
+/// show no other file.
+fn reveal(dir: &Path, id: i64) -> Value {
+    let list: Value = fs::read(dir.join(PROGRESS)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let item = list.as_array().and_then(|l| l.iter().find(|i| i["id"] == id));
+    let path = item.and_then(|i| Some(Path::new(i["dir"].as_str()?).join(i["filename"].as_str()?)));
+    match path.filter(|p| p.exists()).map(|p| crate::reveal(&p)) {
+        Some(Ok(_)) => json!({ "ok": true }),
+        Some(Err(e)) => json!({ "ok": false, "error": e }),
+        None => json!({ "ok": false, "error": "Không thấy file này nữa" }),
+    }
+}
+
 /// The answer to one message of the extension: `ping` for the popup, `variants` for the resolutions of an HLS video,
-/// `page` for the formats yt-dlp finds on a video page, and anything else is a download, put in the inbox. Every answer carries the app's version, which tells the
-/// extension when the app has updated its files (background.js).
+/// `page` for the formats yt-dlp finds on a video page, `reveal` to show a finished download, and anything else is a
+/// download, put in the inbox. Every answer carries the app's version, which tells the extension when the app has
+/// updated its files (background.js).
 fn answer(dir: &Path, message: &Value) -> Value {
     let mut reply = reply_to(dir, message);
     reply["version"] = json!(env!("CARGO_PKG_VERSION"));
@@ -157,6 +218,7 @@ fn reply_to(dir: &Path, message: &Value) -> Value {
     let invalid = || json!({ "ok": false, "error": "Liên kết không hợp lệ" });
     match message["cmd"].as_str() {
         Some("ping") => json!({ "ok": true }),
+        Some("reveal") => reveal(dir, message["id"].as_i64().unwrap_or(0)),
         Some("variants") => match Job::from_message(message) {
             Some(job) => match crate::hls::choices(&job.url, &job.headers()) {
                 Ok(choices) => {
@@ -195,9 +257,7 @@ fn reply_to(dir: &Path, message: &Value) -> Value {
 /// Starts the app in the tray when it is not running, so a download sent from the browser begins at once instead of
 /// waiting in the inbox for the next start. A bundle is started through `open`, so it is not a child of the browser.
 fn wake(dir: &Path) {
-    // The running app holds this lock (main.rs); being able to take it means no app is running.
-    let running = File::create(dir.join("app.lock")).map_or(true, |f| f.try_lock().is_err());
-    if running {
+    if running(dir) {
         return;
     }
     let Ok(exe) = std::env::current_exe() else { return };
@@ -230,6 +290,11 @@ fn wake(dir: &Path) {
     if let Err(e) = command.spawn() {
         eprintln!("cannot start the app: {e}");
     }
+}
+
+/// Whether the app is running: it holds this lock (main.rs), so being able to take it means no app is.
+fn running(dir: &Path) -> bool {
+    File::create(dir.join("app.lock")).map_or(true, |f| f.try_lock().is_err())
 }
 
 /// Where the extension is kept for the browser to load, in the data folder.

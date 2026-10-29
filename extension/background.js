@@ -3,8 +3,9 @@
 // file to Lanes as it did to the browser (src/browser.rs). A right-click menu sends a link or a video on demand;
 // auto-capture, on by default, sends ordinary downloads. It also notes the video files and HLS playlists each tab
 // loads, which the video button (content.js) offers by resolution; YouTube, and a page where it finds none, the app
-// reads through yt-dlp (src/ytdlp.rs). Nothing leaves the machine: the message goes to
-// the local app only.
+// reads through yt-dlp (src/ytdlp.rs). While anything downloads it keeps a port to the app open for the progress,
+// which it shows on the toolbar button, in the popup and in a dock on the page in front (content.js). Nothing leaves
+// the machine: the messages go to the local app only.
 "use strict";
 
 const HOST = "com.eliasbui.lanes";
@@ -85,14 +86,135 @@ function note(ok, text) {
 }
 
 // Sends one download to the app with the headers the page used. `extra` says what else the video button knows: its
-// `kind` ("hls" for an HLS playlist, "page" for a video page yt-dlp reads), the yt-dlp `format` and the `size`.
+// `kind` ("hls" for an HLS playlist, "page" for a video page yt-dlp reads), the yt-dlp `format` and the `size`. A
+// download the app took shows in the dock at once, before the app has started it.
 async function toLanes(url, filename, referrer, extra = {}) {
   const message = { url, filename: filename || "", referrer: referrer || "", cookie: await cookieHeader(url), userAgent: navigator.userAgent, ...extra };
   const reply = await send(message);
-  const name = (filename || url).split("/").pop().slice(0, 40);
-  note(!!reply.ok, reply.ok ? `Đang tải "${name}"` : reply.error || "Lanes không nhận được liên kết.");
+  if (reply.ok) {
+    sending.push({ url, name: filename || url.split(/[?#]/)[0].split("/").pop() || url, at: Date.now() });
+    watch();
+    push();
+  } else {
+    note(false, reply.error || "Lanes không nhận được liên kết.");
+  }
   return reply;
 }
+
+// The progress, from the app's port. The states are the engine's (src/engine.rs).
+const QUEUED = 0;
+const RUNNING = 1;
+const PAUSED = 2;
+const DONE = 3;
+const FAILED = 4;
+// How long a download stays in the dock once it has stopped, and how long one sent waits there for the app.
+const LINGER = 8000;
+const SEND_WAIT = 60000;
+// How long the port stays open once nothing is left to show.
+const IDLE = 15000;
+
+let port = null;
+let idleTimer = 0;
+// The app's latest downloads, and whether it is running.
+let list = [];
+let live = false;
+// Each download's state when last seen, and when it stopped, by id; downloads sent and not yet in the list; the ones
+// closed in a dock.
+const seen = new Map();
+const sending = [];
+const dismissed = new Set();
+
+function watch() {
+  clearTimeout(idleTimer);
+  idleTimer = 0;
+  if (port) return;
+  port = chrome.runtime.connectNative(HOST);
+  port.onMessage.addListener(onProgress);
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    port = null;
+    list = [];
+    push();
+  });
+  port.postMessage({ cmd: "watch" });
+}
+
+function onProgress(message) {
+  // An app before 0.5 does not know "watch" and answers it as a download with no link.
+  if (message?.event !== "progress") return;
+  catchUp(message.version);
+  live = !!message.live;
+  list = Array.isArray(message.list) ? message.list : [];
+  const now = Date.now();
+  for (const item of list) {
+    const before = seen.get(item.id);
+    if (before?.state === item.state) continue;
+    const stopped = item.state !== QUEUED && item.state !== RUNNING;
+    // A new download takes the place of the one sent for its link, even when it finished before it was first seen.
+    const sent = before ? -1 : sending.findIndex((s) => s.url === item.url);
+    if (sent >= 0) sending.splice(sent, 1);
+    // A download running, just sent or still shown stays in the dock a moment once it stops; one already finished
+    // when first seen is history.
+    const shown = !stopped || sent >= 0 || (before?.until || 0) > 0;
+    seen.set(item.id, { state: item.state, until: !shown ? 0 : stopped ? now + LINGER : Infinity });
+    if (!stopped) dismissed.delete(item.id);
+  }
+  for (let i = sending.length - 1; i >= 0; i--) if (now - sending[i].at > SEND_WAIT) sending.splice(i, 1);
+  push();
+}
+
+function unwatch() {
+  port?.disconnect();
+  port = null;
+  idleTimer = 0;
+}
+
+// What the dock shows: the downloads running, the ones that stopped a moment ago, and the ones sent and not yet
+// started. With the app closed nothing runs.
+function dockItems() {
+  const now = Date.now();
+  const items = list
+    .filter((item) => live && !dismissed.has(item.id) && (seen.get(item.id)?.until || 0) > now)
+    .map(({ id, filename, state, size, downloaded, speed, error }) => ({ id, name: filename, state, size: size || 0, downloaded, speed, error }));
+  for (const s of sending) items.unshift({ id: `send:${s.url}`, name: s.name, state: QUEUED, size: 0, downloaded: 0, speed: 0, error: "" });
+  return items;
+}
+
+let lingerTimer = 0;
+
+// Shows the progress everywhere it is shown, and closes the port once there is nothing left to show.
+async function push() {
+  const items = dockItems();
+  badge(items);
+  chrome.runtime.sendMessage({ type: "progress", items, recent: list.slice(0, 8), live }).catch(() => {});
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+  if (tab?.id >= 0) chrome.tabs.sendMessage(tab.id, { type: "progress", items }, { frameId: 0 }).catch(() => {});
+  // A stopped download leaves the dock when its time is up, though the app sends nothing more.
+  clearTimeout(lingerTimer);
+  const next = Math.min(...[...seen.values()].map((s) => s.until).filter((u) => u > Date.now() && u !== Infinity));
+  if (Number.isFinite(next)) lingerTimer = setTimeout(push, next - Date.now() + 50);
+  if (port && !items.length && !idleTimer) idleTimer = setTimeout(unwatch, IDLE);
+  if (items.length) {
+    clearTimeout(idleTimer);
+    idleTimer = 0;
+  }
+}
+
+// The toolbar button: the share done over everything running, green for a moment when the last one finishes.
+function badge(items) {
+  const running = items.filter((i) => i.state === QUEUED || i.state === RUNNING);
+  const finished = items.some((i) => i.state === DONE);
+  const sized = running.filter((i) => i.size > 0);
+  const total = sized.reduce((n, i) => n + i.size, 0);
+  const pct = total ? Math.floor((100 * sized.reduce((n, i) => n + Math.min(i.downloaded, i.size), 0)) / total) : -1;
+  const text = running.length ? (pct >= 0 && sized.length === running.length ? `${pct}%` : String(running.length)) : finished ? "100%" : "";
+  chrome.action.setBadgeBackgroundColor({ color: running.length ? "#0a84ff" : "#30d158" });
+  chrome.action.setBadgeTextColor?.({ color: "#ffffff" });
+  chrome.action.setBadgeText({ text });
+  chrome.action.setTitle({ title: running.length ? `Lanes: đang tải ${running.length}${pct >= 0 ? `, ${pct}%` : ""}` : "Lanes" });
+}
+
+chrome.tabs.onActivated.addListener(() => (sending.length || list.length) && push());
 
 // The right-click menu on a link or a video: always send it, whatever the auto-capture setting.
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -312,6 +434,23 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   }
   if (message?.type === "streams") {
     streams(sender, message).then(reply, () => reply({ items: [], notes: ["Không đọc được danh sách video."] }));
+    return true;
+  }
+  if (message?.type === "progress?") {
+    reply({ items: dockItems(), recent: list.slice(0, 8), live });
+    // The popup asks for the latest; a page only for what is known.
+    if (message.watch) watch();
+    return;
+  }
+  if (message?.type === "dismiss") {
+    dismissed.add(message.id);
+    const i = sending.findIndex((s) => `send:${s.url}` === message.id);
+    if (i >= 0) sending.splice(i, 1);
+    push();
+    return;
+  }
+  if (message?.type === "reveal") {
+    send({ cmd: "reveal", id: Number(message.id) }).then(reply);
     return true;
   }
   if (message?.type === "download") {
