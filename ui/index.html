@@ -142,6 +142,33 @@
       .ghost:hover { transform: translateY(-1px); }
       .ghost svg { width: 18px; height: 18px; }
 
+      /* The net-merge toggle sits inside the add pill; it glows when the panel is open. */
+      .merge-toggle { width: 30px; height: 30px; box-shadow: none; border: 0; background: transparent; }
+      .merge-toggle svg { width: 19px; height: 19px; }
+      .merge-toggle.on { background: rgba(10, 132, 255, 0.16); color: var(--accent); }
+
+      .merge-panel { max-height: 0; overflow: hidden; transition: max-height 0.28s cubic-bezier(0.32, 0.72, 0, 1); padding: 0 18px; }
+      .merge-panel.open { max-height: 260px; }
+      .merge-card {
+        max-width: 620px; margin: 2px 0 10px;
+        background: var(--glass); border: 1px solid var(--stroke); border-radius: var(--radius);
+        backdrop-filter: blur(32px) saturate(180%); -webkit-backdrop-filter: blur(32px) saturate(180%);
+        box-shadow: var(--shadow); padding: 14px 16px;
+      }
+      .merge-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .merge-head b { font-size: 14px; }
+      .beta { font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: #fff; background: linear-gradient(180deg, #ff9f0a, #ff8a00); padding: 2px 7px; border-radius: 999px; }
+      .merge-note { color: var(--muted); font-size: 12.5px; }
+      #mergeUrls {
+        width: 100%; margin-top: 10px; resize: vertical; min-height: 64px;
+        font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text);
+        background: var(--field); border: 1px solid var(--stroke); border-radius: 12px; padding: 10px 12px; outline: none;
+      }
+      #mergeUrls::placeholder { color: var(--muted); }
+      .merge-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+      .merge-hint { color: var(--muted); font-size: 12px; }
+      .badge-merge { font-size: 11px; font-weight: 700; color: var(--accent); background: rgba(10, 132, 255, 0.14); padding: 1px 7px; border-radius: 999px; margin-left: 6px; }
+
       .scroll { flex: 1; overflow-y: auto; padding: 4px 18px 20px; }
       .scroll::-webkit-scrollbar { width: 10px; }
       .scroll::-webkit-scrollbar-thumb { background: var(--track); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
@@ -305,12 +332,29 @@
         <form class="add" id="addForm">
           <svg viewBox="0 0 24 24" fill="none"><path d="M9 17H7A5 5 0 017 7h2m6 0h2a5 5 0 010 10h-2M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <input id="url" type="text" placeholder="Dán liên kết để tải xuống" autocomplete="off" spellcheck="false" />
+          <button class="ghost merge-toggle" id="mergeToggle" type="button" title="net-merge: tải một file từ nhiều nguồn">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 6h7m9 0h-5M4 18h5m11 0h-7M4 12h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="14" cy="6" r="2.2" fill="currentColor"/><circle cx="10" cy="18" r="2.2" fill="currentColor"/></svg>
+          </button>
           <button class="btn" type="submit">Tải</button>
         </form>
         <button class="ghost" id="gear" title="Cài đặt">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.7 7.7 0 000-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 00-1.7-1l-.4-2.5h-4l-.4 2.5a7.6 7.6 0 00-1.7 1l-2.4-1-2 3.4L4.6 11a7.7 7.7 0 000 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.4 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
         </button>
       </header>
+
+      <div class="merge-panel" id="mergePanel">
+        <div class="merge-card">
+          <div class="merge-head">
+            <b>net-merge</b><span class="beta">beta</span>
+            <span class="merge-note">Gộp băng thông từ nhiều nguồn của cùng một file.</span>
+          </div>
+          <textarea id="mergeUrls" rows="3" spellcheck="false" placeholder="Mỗi dòng một liên kết mirror của cùng một file:&#10;https://mirror-1.example/file.iso&#10;https://mirror-2.example/file.iso"></textarea>
+          <div class="merge-actions">
+            <span class="merge-hint" id="mergeHint">Lanes chia các đoạn cho từng nguồn, bỏ nguồn nào khác kích thước.</span>
+            <button class="btn" id="mergeGo" type="button">Tải gộp</button>
+          </div>
+        </div>
+      </div>
 
       <div class="scroll">
         <div class="list" id="list"></div>
@@ -438,7 +482,8 @@
           let sub;
           if (it.state === RUNNING) {
             const left = it.size && it.speed ? eta((it.size - it.downloaded) / it.speed) : "";
-            sub = `${human(it.downloaded)} / ${human(it.size)} · ${human(it.speed)}/s${left ? " · còn " + left : ""} · ${it.connections} kết nối`;
+            const src = it.sources > 1 ? ` · ${it.sources} nguồn` : "";
+            sub = `${human(it.downloaded)} / ${human(it.size)} · ${human(it.speed)}/s${left ? " · còn " + left : ""} · ${it.connections} kết nối${src}`;
           } else if (it.state === ERROR) {
             sub = it.error || "Tải thất bại";
           } else if (it.state === DONE) {
@@ -456,7 +501,7 @@
             <div class="top">
               <span class="fileicon"><svg viewBox="0 0 24 24" fill="none">${ICONS.file}</svg></span>
               <div class="meta">
-                <div class="name" title="${esc(it.filename)}">${esc(it.filename)}</div>
+                <div class="name" title="${esc(it.filename)}">${esc(it.filename)}${it.sources > 1 ? '<span class="badge-merge">net-merge</span>' : ""}</div>
                 <div class="sub">${esc(sub)}</div>
               </div>
               <span class="pill ${k}">${label[it.state]}</span>
@@ -489,6 +534,22 @@
           call("add", { url });
           $("url").value = "";
         }
+      });
+
+      // net-merge panel: paste several mirror URLs of one file, download them merged.
+      const mergePanel = $("mergePanel"), mergeToggle = $("mergeToggle");
+      mergeToggle.addEventListener("click", () => {
+        const on = mergePanel.classList.toggle("open");
+        mergeToggle.classList.toggle("on", on);
+        if (on) $("mergeUrls").focus();
+      });
+      $("mergeGo").addEventListener("click", () => {
+        const urls = $("mergeUrls").value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+        if (!urls.length) return;
+        call("add", { urls });
+        $("mergeUrls").value = "";
+        mergePanel.classList.remove("open");
+        mergeToggle.classList.remove("on");
       });
 
       // Settings sheet.

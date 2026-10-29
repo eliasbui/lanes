@@ -37,6 +37,10 @@ bar, and is in English and Vietnamese.
 - **Browser capture.** The extension takes a download the browser started and sends it to Lanes with the Referer,
   Cookie and User-Agent of the page, which is what gets most "403 Forbidden" downloads through. Works in Chrome, Edge,
   Brave and Cốc Cốc; a right-click "Download with Lanes" is there too.
+- **net-merge (beta).** Paste several mirror URLs of one file and Lanes spreads the segments across them, merging
+  their bandwidth. A mirror that disagrees on the size or allows no ranges is dropped, and each segment moves to the
+  next mirror when one fails. (Lanes' net-merge is multi-source merging; it is unrelated to the NetMerge
+  network-bonding tools.)
 - **Pause, resume, speed and ETA** for every download, live.
 - **Categories by the Downloads folder**, a connection setting, launch at login, and in-app updates.
 - **Liquid Glass interface**, light and dark, that follows the system.

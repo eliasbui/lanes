@@ -88,12 +88,19 @@ impl Settings {
     }
 }
 
-/// A download to add, once its name and size are known from a probe.
+/// A download to add, once its name and size are known from a probe. `sources` holds the net-merge mirror pool with
+/// the primary first; an ordinary download has one entry.
 struct AddReq {
-    url: String,
+    sources: Vec<String>,
     filename: String,
     size: Option<u64>,
     headers: Vec<(String, String)>,
+}
+
+impl AddReq {
+    fn url(&self) -> &str {
+        self.sources.first().map(String::as_str).unwrap_or_default()
+    }
 }
 
 enum UserEvent {
@@ -164,7 +171,7 @@ fn main() {
                     let headers = job.headers();
                     let size = engine::probe(&job.url, &headers).ok().and_then(|p| p.size);
                     let filename = if job.filename.is_empty() { engine::filename_from(&job.url, None) } else { job.filename };
-                    let _ = proxy.send_event(UserEvent::Added(AddReq { url: job.url, filename, size, headers }));
+                    let _ = proxy.send_event(UserEvent::Added(AddReq { sources: vec![job.url], filename, size, headers }));
                 }
                 thread::sleep(INBOX_EVERY);
             }
@@ -330,23 +337,27 @@ impl App {
     fn resume_unfinished(&self) {
         for row in store::list(&self.db).unwrap_or_default() {
             if matches!(row.status, engine::state::RUNNING | engine::state::QUEUED) {
-                self.engine.start(row.id, &row.url, row.final_path(), row.header_pairs());
+                self.engine.start(row.id, row.source_list(), row.final_path(), row.header_pairs());
             }
         }
     }
 
-    /// A URL typed or pasted into the page: probe it for a name and size off the event loop, then add it.
-    fn add_url(&self, url: &str) {
-        let (url, proxy) = (url.trim().to_owned(), self.proxy.clone());
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            self.post(&json!({ "event": "toast", "data": "Hãy dán một liên kết http hoặc https" }));
+    /// One or more URLs typed or pasted into the page. Several URLs are the mirrors of one file (net-merge, beta): the
+    /// first is probed for the name and size, and all of them become the download's sources. The probe runs off the
+    /// event loop.
+    fn add_sources(&self, urls: Vec<String>) {
+        let sources: Vec<String> = urls.into_iter().map(|u| u.trim().to_owned()).filter(|u| !u.is_empty()).collect();
+        if !sources.iter().all(|u| u.starts_with("http://") || u.starts_with("https://")) || sources.is_empty() {
+            self.post(&json!({ "event": "toast", "data": "Hãy dán liên kết http hoặc https" }));
             return;
         }
+        let proxy = self.proxy.clone();
         thread::spawn(move || {
-            let probe = engine::probe(&url, &[]).ok();
-            let filename = probe.as_ref().map(|p| p.filename.clone()).unwrap_or_else(|| engine::filename_from(&url, None));
+            let primary = sources[0].clone();
+            let probe = engine::probe(&primary, &[]).ok();
+            let filename = probe.as_ref().map(|p| p.filename.clone()).unwrap_or_else(|| engine::filename_from(&primary, None));
             let size = probe.and_then(|p| p.size);
-            let _ = proxy.send_event(UserEvent::Added(AddReq { url, filename, size, headers: Vec::new() }));
+            let _ = proxy.send_event(UserEvent::Added(AddReq { sources, filename, size, headers: Vec::new() }));
         });
     }
 
@@ -360,7 +371,9 @@ impl App {
         let path = engine::unique_path(&dir, &req.filename);
         let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let headers_json = serde_json::to_string(&req.headers).unwrap_or_else(|_| "[]".into());
-        let id = match store::add(&self.db, &req.url, &filename, &dir.to_string_lossy(), &headers_json, now()) {
+        // Several sources are stored for a net-merge resume; one source stores an empty list and falls back to the url.
+        let sources_json = if req.sources.len() > 1 { serde_json::to_string(&req.sources).unwrap_or_else(|_| "[]".into()) } else { "[]".into() };
+        let id = match store::add(&self.db, req.url(), &filename, &dir.to_string_lossy(), &headers_json, &sources_json, now()) {
             Ok(id) => id,
             Err(e) => return eprintln!("add: {e}"),
         };
@@ -368,7 +381,7 @@ impl App {
             let _ = store::set_size(&self.db, id, size);
         }
         let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
-        self.engine.start(id, &req.url, path, req.headers);
+        self.engine.start(id, req.sources, path, req.headers);
         self.push_list();
     }
 
@@ -436,6 +449,7 @@ impl App {
                 "size": size,
                 "downloaded": downloaded,
                 "connections": snap.map(|s| s.connections).unwrap_or(0),
+                "sources": snap.map(|s| s.sources).unwrap_or(1),
                 "speed": speed,
                 "error": snap.map(|s| s.error.clone()).filter(|e| !e.is_empty()).unwrap_or(row.error.clone()),
             }));
@@ -487,7 +501,12 @@ impl App {
                 self.start_update_check();
             }
             "add" => {
-                self.add_url(args["url"].as_str().unwrap_or_default());
+                // `urls` is the net-merge mirror list; `url` is the single-source form.
+                let urls = match args["urls"].as_array() {
+                    Some(arr) => arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+                    None => vec![args["url"].as_str().unwrap_or_default().to_owned()],
+                };
+                self.add_sources(urls);
                 reply(self, Ok(Value::Null));
             }
             "pause" => {
@@ -501,7 +520,7 @@ impl App {
                 let id = num("id");
                 if let Ok(Some(row)) = store::get(&self.db, id) {
                     let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
-                    self.engine.start(id, &row.url, row.final_path(), row.header_pairs());
+                    self.engine.start(id, row.source_list(), row.final_path(), row.header_pairs());
                 }
                 self.push_list();
                 reply(self, Ok(Value::Null));

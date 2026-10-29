@@ -36,6 +36,9 @@ tiếng Việt.
 - **Bắt download từ trình duyệt.** Tiện ích nhận download trình duyệt vừa tạo rồi gửi sang Lanes kèm Referer, Cookie,
   User-Agent của trang, đây là thứ giúp phần lớn liên kết bị lỗi "403 Forbidden" tải được. Dùng với Chrome, Edge,
   Brave và Cốc Cốc; có cả menu chuột phải "Tải bằng Lanes".
+- **net-merge (beta).** Dán nhiều liên kết mirror của cùng một file, Lanes chia các đoạn cho từng nguồn và gộp băng
+  thông. Nguồn nào khác kích thước hoặc không cho tải theo đoạn sẽ bị bỏ; mỗi đoạn tự chuyển sang nguồn khác khi một
+  nguồn lỗi. (net-merge của Lanes là gộp nhiều nguồn tải, không liên quan tới các công cụ NetMerge gộp đường mạng.)
 - **Tạm dừng, tiếp tục, tốc độ và thời gian còn lại** cho từng tệp, theo thời gian thực.
 - **Lưu theo thư mục tải xuống**, chỉnh số kết nối, mở cùng máy tính, và tự cập nhật trong app.
 - **Giao diện Liquid Glass**, sáng và tối, theo hệ thống.

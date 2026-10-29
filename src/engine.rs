@@ -245,6 +245,10 @@ pub struct Task {
     pub id: i64,
     pub url: String,
     pub final_path: PathBuf,
+    /// net-merge (beta): the mirror URLs for the same file, the primary first. One entry is an ordinary download;
+    /// several spread the segments over the mirrors and merge their bandwidth, each segment moving to the next
+    /// mirror when one fails. Narrowed in `run` to the mirrors that agree on the size and allow ranges.
+    sources: Mutex<Vec<String>>,
     /// Referer, Cookie and User-Agent from the page, so a site that checks them serves the same file.
     headers: Vec<(String, String)>,
     state: AtomicU8,
@@ -265,6 +269,8 @@ pub struct Snapshot {
     pub size: Option<u64>,
     pub downloaded: u64,
     pub connections: usize,
+    /// How many mirror sources are in use (net-merge beta); 1 for an ordinary download.
+    pub sources: usize,
     pub error: String,
 }
 
@@ -281,6 +287,7 @@ impl Task {
             },
             downloaded: self.downloaded.load(Ordering::Relaxed),
             connections: self.segments.lock().map(|s| s.len()).unwrap_or(0),
+            sources: self.sources.lock().map(|s| s.len().max(1)).unwrap_or(1),
             error: self.error.lock().map(|e| e.clone()).unwrap_or_default(),
         }
     }
@@ -317,14 +324,17 @@ impl Engine {
         self.connections.load(Ordering::Relaxed) as usize
     }
 
-    /// Starts a fresh download, or picks up one left half-done from a sidecar beside `final_path`. The headers are
-    /// the ones the browser carried, replayed on every connection.
-    pub fn start(self: &Arc<Self>, id: i64, url: &str, final_path: PathBuf, headers: Vec<(String, String)>) {
+    /// Starts a fresh download, or picks up one left half-done from a sidecar beside `final_path`. `sources` is the
+    /// mirror pool for net-merge, the primary first (a one-item list is an ordinary download). The headers are the
+    /// ones the browser carried, replayed on every connection.
+    pub fn start(self: &Arc<Self>, id: i64, sources: Vec<String>, final_path: PathBuf, headers: Vec<(String, String)>) {
+        let url = sources.first().cloned().unwrap_or_default();
         let resume = load_meta(&final_path).filter(|m| m.url == url);
         let task = Arc::new(Task {
             id,
-            url: url.to_owned(),
+            url: url.clone(),
             final_path: final_path.clone(),
+            sources: Mutex::new(sources),
             headers,
             state: AtomicU8::new(state::RUNNING),
             downloaded: AtomicU64::new(resume.as_ref().map(Meta::done).unwrap_or(0)),
@@ -401,6 +411,19 @@ impl Engine {
             task.total.store(size, Ordering::Relaxed);
         }
 
+        // net-merge (beta): keep the mirrors that agree on the size and allow ranges; otherwise fall back to the one
+        // primary source, since a merge needs every mirror to serve the same bytes by range.
+        {
+            let listed = task.sources.lock().map(|s| s.clone()).unwrap_or_default();
+            let active = match probe.size {
+                Some(size) if probe.resumable && listed.len() > 1 => narrow_sources(&listed, size, &task.headers),
+                _ => listed.into_iter().take(1).collect(),
+            };
+            if let Ok(mut slot) = task.sources.lock() {
+                *slot = active;
+            }
+        }
+
         let part = part_of(&task.final_path);
         let file = match open_part(&part, probe.size) {
             Ok(file) => Arc::new(file),
@@ -434,9 +457,10 @@ impl Engine {
         task.downloaded.store(segments.iter().map(|s| s.done).sum(), Ordering::Relaxed);
 
         let mut handles = Vec::new();
-        for (segment, done) in segments.iter().cloned().zip(dones.iter().cloned()) {
+        for (i, (segment, done)) in segments.iter().cloned().zip(dones.iter().cloned()).enumerate() {
             let (task, file) = (task.clone(), file.clone());
-            handles.push(thread::spawn(move || download_segment(&task, &file, segment, &done)));
+            // Each segment starts on a different mirror, so the sources are used in parallel from the first moment.
+            handles.push(thread::spawn(move || download_segment(&task, &file, segment, &done, i)));
         }
 
         // Save the sidecar while the connections run, so a crash still leaves a resumable file. The flag stops the
@@ -504,9 +528,13 @@ fn finish(file: &fs::File, part: &Path, final_path: &Path, size: Option<u64>) ->
 }
 
 /// One connection: fetches its byte range from where it left off, writing each chunk straight to its offset. It
-/// returns whether the range is complete; a pause or a removal ends it early without an error.
-fn download_segment(task: &Task, file: &fs::File, segment: Segment, done: &AtomicU64) -> bool {
-    let url = &task.url;
+/// returns whether the range is complete; a pause or a removal ends it early without an error. With net-merge it
+/// starts on the mirror `source_start` and moves to the next mirror each time one fails, so a dead mirror never
+/// strands a segment while others are alive.
+fn download_segment(task: &Task, file: &fs::File, segment: Segment, done: &AtomicU64, source_start: usize) -> bool {
+    let sources = task.sources.lock().map(|s| s.clone()).unwrap_or_default();
+    let sources = if sources.is_empty() { vec![task.url.clone()] } else { sources };
+    let mut si = source_start % sources.len();
     let len = segment.end.map(|end| end + 1 - segment.start);
     let mut attempt = 0;
     loop {
@@ -522,7 +550,7 @@ fn download_segment(task: &Task, file: &fs::File, segment: Segment, done: &Atomi
             Some(end) => format!("bytes={from}-{end}"),
             None => format!("bytes={from}-"),
         };
-        match fetch_range(url, &range, segment.end.is_some(), &task.headers) {
+        match fetch_range(&sources[si], &range, segment.end.is_some(), &task.headers) {
             Ok(mut reader) => {
                 let mut buf = vec![0u8; CHUNK];
                 let mut offset = from;
@@ -551,6 +579,8 @@ fn download_segment(task: &Task, file: &fs::File, segment: Segment, done: &Atomi
             }
             Err(e) => {
                 attempt += 1;
+                // Move to the next mirror for the retry; with one source this stays put.
+                si = (si + 1) % sources.len();
                 if attempt > RETRIES {
                     task.set_error(e);
                     return false;
@@ -620,6 +650,19 @@ pub fn probe(url: &str, headers: &[(String, String)]) -> Result<Probe, String> {
         (response.header("content-length").and_then(|v| v.parse().ok()), accepts)
     };
     Ok(Probe { size, resumable, filename, etag, last_modified })
+}
+
+/// For net-merge: the mirrors from `sources` (the primary first, always kept) that a probe shows serve the same file,
+/// by the same size with ranges allowed. A mirror that disagrees or cannot be reached is dropped, so a merge only
+/// ever pulls bytes that line up across its sources.
+fn narrow_sources(sources: &[String], size: u64, headers: &[(String, String)]) -> Vec<String> {
+    let mut active: Vec<String> = sources.first().cloned().into_iter().collect();
+    for url in sources.iter().skip(1) {
+        if probe(url, headers).is_ok_and(|p| p.resumable && p.size == Some(size)) {
+            active.push(url.clone());
+        }
+    }
+    active
 }
 
 /// The total length from a `Content-Range: bytes 0-0/12345` header.
@@ -749,6 +792,39 @@ mod tests {
         }
         file.sync_all().unwrap();
         assert_eq!(fs::read(&path).unwrap(), data);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// net-merge over the network: the same file given as two mirrors downloads whole, its segments spread over both
+    /// sources and written into one file that matches the published hash. Ignored by default since it needs the net;
+    /// run with `cargo test -- --ignored net_merge`.
+    #[test]
+    #[ignore = "needs the network"]
+    fn net_merge_from_two_mirrors_matches_the_hash() {
+        use sha2::{Digest, Sha256};
+        let url = "https://github.com/eliasbui/lanes/releases/download/v0.1.0/Lanes-0.1.0-macos.zip".to_string();
+        let want = "bdbb3da3ce0dbb3cf0d7d73fafc4ee50fc168cf3350db98ed0f67e27ae5d2d7b";
+        let dir = std::env::temp_dir().join(format!("lanes-netmerge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.zip");
+
+        let engine = std::sync::Arc::new(Engine::new());
+        engine.set_connections(8);
+        engine.start(1, vec![url.clone(), url], path.clone(), Vec::new());
+        loop {
+            let snap = engine.snapshots().into_iter().next().expect("the task is listed");
+            assert!(snap.sources >= 1);
+            match snap.state {
+                state::DONE => break,
+                state::ERROR => panic!("download failed: {}", snap.error),
+                _ => thread::sleep(Duration::from_millis(200)),
+            }
+        }
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut fs::File::open(&path).unwrap(), &mut hasher).unwrap();
+        let got: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(got, want);
         fs::remove_dir_all(&dir).unwrap();
     }
 }
