@@ -47,7 +47,10 @@ tiếng Việt.
   thông. Nguồn nào khác kích thước hoặc không cho tải theo đoạn sẽ bị bỏ; mỗi đoạn tự chuyển sang nguồn khác khi một
   nguồn lỗi. (net-merge của Lanes là gộp nhiều nguồn tải, không liên quan tới các công cụ NetMerge gộp đường mạng.)
 - **Tạm dừng, tiếp tục, tốc độ và thời gian còn lại** cho từng tệp, theo thời gian thực.
-- **Lưu theo thư mục tải xuống**, chỉnh số kết nối, mở cùng máy tính, và tự cập nhật trong app.
+- **Phân loại như IDM.** Tệp được lưu vào `Compressed`, `Documents`, `Music`, `Programs`, `Video` trong thư mục lưu
+  theo đuôi tệp (danh sách của IDM, thêm dmg và pkg vào chương trình); tệp khác để ngay ở thư mục lưu. Tắt được bằng
+  một công tắc trong Cài đặt.
+- **Chỉnh số kết nối**, mở cùng máy tính, và tự cập nhật trong app.
 - **Giao diện Liquid Glass**, sáng và tối, theo hệ thống.
 
 ## Cài đặt

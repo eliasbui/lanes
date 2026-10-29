@@ -182,6 +182,30 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// The categories of IDM: the folder inside the download folder a file goes to by its extension. A file in none of them
+/// (IDM's "General") stays in the download folder itself. An entry ending in `*` matches by prefix, for the parts of a
+/// split archive (r00, r01, ...). IDM's own lists, with the macOS installers (dmg, pkg) added to Programs.
+const CATEGORIES: [(&str, &[&str]); 5] = [
+    ("Compressed", &["zip", "rar", "r0*", "r1*", "arj", "gz", "sit", "sitx", "sea", "ace", "bz2", "7z"]),
+    ("Documents", &["doc", "pdf", "ppt", "pps", "docx", "pptx"]),
+    ("Music", &["mp3", "wav", "wma", "mpa", "ram", "ra", "aac", "aif", "m4a", "tsa"]),
+    ("Programs", &["exe", "msi", "dmg", "pkg"]),
+    ("Video", &["avi", "mpg", "mpe", "mpeg", "asf", "wmv", "mov", "qt", "rm", "mp4", "flv", "m4v", "webm", "ogv", "ogg", "mkv", "ts", "tsv"]),
+];
+
+/// The category folder for `filename`, or None for a general file.
+pub fn category(filename: &str) -> Option<&'static str> {
+    let ext = filename.rsplit_once('.')?.1.to_ascii_lowercase();
+    CATEGORIES.iter().find_map(|(folder, exts)| {
+        exts.iter()
+            .any(|e| match e.strip_suffix('*') {
+                Some(prefix) => ext.starts_with(prefix),
+                None => ext == *e,
+            })
+            .then_some(*folder)
+    })
+}
+
 /// A free path when `wanted` is taken: `name (2).ext`, `name (3).ext` and so on.
 pub fn unique_path(dir: &Path, wanted: &str) -> PathBuf {
     let first = dir.join(wanted);
@@ -933,6 +957,20 @@ mod tests {
         let back: Meta = serde_json::from_str(&text).unwrap();
         assert_eq!(back, meta);
         assert_eq!(back.done(), 150);
+    }
+
+    #[test]
+    fn files_fall_into_the_categories_of_idm() {
+        assert_eq!(category("a.ZIP"), Some("Compressed"));
+        assert_eq!(category("movie.part.r01"), Some("Compressed"));
+        assert_eq!(category("backup.tar.gz"), Some("Compressed"));
+        assert_eq!(category("report.pdf"), Some("Documents"));
+        assert_eq!(category("song.m4a"), Some("Music"));
+        assert_eq!(category("Lanes.dmg"), Some("Programs"));
+        assert_eq!(category("Trang 720p.ts"), Some("Video"));
+        assert_eq!(category("notes.txt"), None, "general");
+        assert_eq!(category("README"), None);
+        assert_eq!(category("x.rss"), None, "r0* and r1* do not catch every r");
     }
 
     #[test]

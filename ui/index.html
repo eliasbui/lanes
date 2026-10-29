@@ -387,6 +387,14 @@
 
         <div class="group">
           <div class="rowline">
+            <label for="classify" style="margin:0">Phân loại theo loại tệp</label>
+            <span class="switch"><input type="checkbox" id="classify" /><span class="track2"></span></span>
+          </div>
+          <p class="hint">Như IDM: tệp nén vào Compressed, tài liệu vào Documents, nhạc vào Music, chương trình vào Programs, video vào Video, đều trong thư mục lưu. Tệp khác để ngay ở thư mục lưu.</p>
+        </div>
+
+        <div class="group">
+          <div class="rowline">
             <label for="autostart" style="margin:0">Mở cùng máy tính</label>
             <span class="switch"><input type="checkbox" id="autostart" /><span class="track2"></span></span>
           </div>
@@ -574,6 +582,9 @@
         const path = await call("choose_folder").catch(() => null);
         if (path) { $("folder").value = path; call("set_folder", { path }); }
       });
+      $("classify").addEventListener("change", () =>
+        call("set_classify", { on: $("classify").checked }).then((on) => ($("classify").checked = !!on)).catch(() => {})
+      );
       $("autostart").addEventListener("change", () =>
         call("set_autostart", { on: $("autostart").checked }).then((on) => ($("autostart").checked = !!on)).catch(() => {})
       );
@@ -603,6 +614,7 @@
           $("connsVal").textContent = d.settings.connections;
           $("folder").value = d.settings.download_dir;
           $("autostart").checked = d.autostart;
+          $("classify").checked = d.settings.classify;
           $("extPath").value = d.extension_dir;
         },
         list: render,

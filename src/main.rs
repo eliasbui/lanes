@@ -64,16 +64,20 @@ fn downloads_dir() -> PathBuf {
     dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| ".".into()).join("Downloads"))
 }
 
-/// What the user can change, kept in a small file beside the list.
+/// What the user can change, kept in a small file beside the list. A field missing from an older file takes its
+/// default, so an update keeps the rest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 struct Settings {
     download_dir: String,
     connections: usize,
+    /// Files go into IDM's category folders inside the download folder (`engine::category`).
+    classify: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { download_dir: downloads_dir().to_string_lossy().into_owned(), connections: engine::DEFAULT_CONNECTIONS }
+        Settings { download_dir: downloads_dir().to_string_lossy().into_owned(), connections: engine::DEFAULT_CONNECTIONS, classify: true }
     }
 }
 
@@ -378,7 +382,10 @@ impl App {
 
     /// Records a probed download, starts it, and shows it in the list.
     fn add(&mut self, req: AddReq) {
-        let dir = PathBuf::from(&self.settings.download_dir);
+        let mut dir = PathBuf::from(&self.settings.download_dir);
+        if let Some(folder) = engine::category(&req.filename).filter(|_| self.settings.classify) {
+            dir.push(folder);
+        }
         if std::fs::create_dir_all(&dir).is_err() {
             self.post(&json!({ "event": "toast", "data": "Không ghi được vào thư mục tải xuống" }));
             return;
@@ -582,6 +589,11 @@ impl App {
                 }
                 reply(self, Ok(json!(self.settings.download_dir)));
             }
+            "set_classify" => {
+                self.settings.classify = args["on"].as_bool().unwrap_or(true);
+                self.settings.save(&self.dir);
+                reply(self, Ok(json!(self.settings.classify)));
+            }
             "choose_folder" => reply(self, choose_folder().map(|p| json!(p))),
             "set_autostart" => reply(self, autostart::set(args["on"].as_bool().unwrap_or(false)).map(|()| json!(autostart::enabled()))),
             "check_update" => {
@@ -704,4 +716,14 @@ fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let info = reader.next_frame(&mut buf).ok()?;
     buf.truncate(info.buffer_size());
     (info.color_type == png::ColorType::Rgba).then_some((buf, info.width, info.height))
+}
+
+#[cfg(test)]
+mod tests {
+    /// A settings file from before a field existed keeps what it has, and the new field takes its default.
+    #[test]
+    fn older_settings_keep_the_folder_and_classify_by_default() {
+        let settings: super::Settings = serde_json::from_str(r#"{"download_dir": "/x", "connections": 4}"#).unwrap();
+        assert_eq!((settings.download_dir.as_str(), settings.connections, settings.classify), ("/x", 4, true));
+    }
 }

@@ -48,7 +48,10 @@ bar, and is in English and Vietnamese.
   next mirror when one fails. (Lanes' net-merge is multi-source merging; it is unrelated to the NetMerge
   network-bonding tools.)
 - **Pause, resume, speed and ETA** for every download, live.
-- **Categories by the Downloads folder**, a connection setting, launch at login, and in-app updates.
+- **Categories as in IDM.** Files go into `Compressed`, `Documents`, `Music`, `Programs` and `Video` inside the
+  download folder by their extension (IDM's lists, plus dmg and pkg as programs); anything else stays in the folder
+  itself. One switch in Settings turns it off.
+- **A connection setting**, launch at login, and in-app updates.
 - **Liquid Glass interface**, light and dark, that follows the system.
 
 ## Install
