@@ -38,7 +38,7 @@ tiếng Việt.
   User-Agent của trang, đây là thứ giúp phần lớn liên kết bị lỗi "403 Forbidden" tải được. Dùng với Chrome, Edge,
   Brave và Cốc Cốc; có cả menu chuột phải "Tải bằng Lanes". Nếu Lanes chưa chạy, tiện ích tự mở app trong thanh
   trạng thái để download bắt đầu ngay.
-- **Nút tải video.** Rê chuột lên một video, nút "Tải video" hiện ở góc; bấm vào sẽ thấy các bản Lanes tải được cho
+- **Nút tải video.** Rê chuột lên một video, nút "Tải video" có biểu tượng Lanes hiện ngay dưới video như IDM (nằm trong góc dưới của video khi video chạm đáy cửa sổ); bấm vào sẽ thấy các bản Lanes tải được cho
   video đó theo độ phân giải (1080p, 720p, ...) kèm dung lượng hoặc dung lượng ước tính. Tệp video nguyên vẹn đi qua
   engine nhiều kết nối như thường; luồng HLS (`.m3u8`) được tải song song từng đoạn, kể cả mã hóa AES-128, tiếp tục
   được khi dừng, rồi ghép thành một tệp `.ts` hoặc `.mp4`. Chưa hỗ trợ: YouTube và các luồng DASH khác, phát trực

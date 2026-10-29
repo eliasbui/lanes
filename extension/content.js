@@ -9,12 +9,18 @@
   const MIN_WIDTH = 200;
   const MIN_HEIGHT = 120;
   const HIDE_AFTER = 1500;
+  // The button's height and its distance from the video when it sits under it.
+  const BUTTON = 32;
+  const GAP = 6;
+  // Room left for a player's own control bar along the bottom of its video.
+  const CONTROLS = 64;
 
   let enabled = true;
   let video = null;
   let menuOpen = false;
   let hideTimer = 0;
   let frame = 0;
+  let overButton = false;
 
   chrome.storage.local.get("videoButton").then(({ videoButton = true }) => (enabled = videoButton), () => {});
   chrome.storage.onChanged.addListener((changes) => {
@@ -30,15 +36,22 @@
     <style>
       .box {
         position: absolute; top: 0; left: 0; transform: translateX(-100%);
-        display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
         font: 13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
         color: #fff; -webkit-font-smoothing: antialiased;
       }
       .go {
-        all: unset; cursor: pointer; white-space: nowrap;
-        padding: 6px 14px; border-radius: 999px; font-weight: 600; letter-spacing: -0.1px;
+        all: unset; cursor: pointer; white-space: nowrap; box-sizing: border-box; height: ${BUTTON}px;
+        display: inline-flex; align-items: center; gap: 7px;
+        padding: 0 13px 0 6px; border-radius: 999px; font-weight: 600; letter-spacing: -0.1px;
         transition: background 0.15s ease, transform 0.12s ease;
       }
+      /* The Lanes mark, as in the app: a white arrow on a blue tile. */
+      .mark {
+        width: 20px; height: 20px; border-radius: 6px; flex: none; display: grid; place-items: center;
+        background: linear-gradient(160deg, #2b93ff, #0040dd);
+        box-shadow: 0 2px 6px rgba(10, 70, 200, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      }
+      .mark svg { width: 13px; height: 13px; }
       .glass {
         background: rgba(22, 24, 32, 0.74);
         border: 1px solid rgba(255, 255, 255, 0.2);
@@ -50,9 +63,12 @@
       .go:active { transform: scale(0.97); }
       .go:focus-visible, .item:focus-visible { outline: 2px solid #0a84ff; outline-offset: 2px; }
       .menu {
+        position: absolute; right: 0; top: calc(100% + 6px);
         box-sizing: border-box; min-width: 240px; max-width: 340px; max-height: 320px; overflow-y: auto;
         padding: 6px; border-radius: 14px;
       }
+      /* The menu opens toward the side of the button with more room in the window, upward over the video as a rule. */
+      .box.up .menu { top: auto; bottom: calc(100% + 6px); }
       .menu[hidden] { display: none; }
       .item {
         all: unset; box-sizing: border-box; cursor: pointer; width: 100%;
@@ -65,9 +81,13 @@
       .note { padding: 8px 10px; opacity: 0.82; font-size: 12.5px; }
     </style>
     <div class="box">
-      <button class="go glass" type="button" aria-haspopup="menu">Tải video</button>
+      <button class="go glass" type="button" aria-haspopup="menu">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v11m0 0l-4.5-4.5M12 14l4.5-4.5" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></svg></span>
+        Tải video
+      </button>
       <div class="menu glass" role="menu" hidden></div>
     </div>`;
+  const box = root.querySelector(".box");
   const go = root.querySelector(".go");
   const menu = root.querySelector(".menu");
 
@@ -88,13 +108,22 @@
     return best;
   }
 
-  // The button sits inside the video's top-right corner.
+  // The button sits just under the video's bottom-right corner, as download managers do. A video that reaches the
+  // bottom of the window (a tall one, or fullscreen) has no room under it, so there the button sits inside its
+  // bottom-right corner, above the player's control bar.
   function place() {
     if (!video?.isConnected) return hide();
     const r = video.getBoundingClientRect();
     if (r.width < MIN_WIDTH || r.height < MIN_HEIGHT) return hide();
-    host.style.top = `${Math.max(r.top, 0) + 10}px`;
-    host.style.left = `${Math.min(r.right, document.documentElement.clientWidth) - 10}px`;
+    const right = Math.min(r.right, document.documentElement.clientWidth);
+    const under = r.bottom + GAP + BUTTON <= window.innerHeight;
+    const top = under ? r.bottom + GAP : Math.max(Math.min(r.bottom, window.innerHeight) - CONTROLS - BUTTON, r.top + 10);
+    const above = top - GAP;
+    const below = window.innerHeight - top - BUTTON - GAP;
+    box.classList.toggle("up", above >= below);
+    menu.style.maxHeight = `${Math.max(Math.min(320, Math.max(above, below) - 8), 80)}px`;
+    host.style.top = `${top}px`;
+    host.style.left = `${under ? right : right - 10}px`;
   }
 
   function show(v) {
@@ -133,11 +162,21 @@
         frame = 0;
         const v = videoAt(e.clientX, e.clientY);
         if (v) show(v);
-        else hideSoon();
+        else if (!overButton) hideSoon();
       });
     },
     { capture: true, passive: true }
   );
+  // Under the video the button is outside the video's box, so being on it keeps it shown.
+  host.addEventListener("pointerenter", () => {
+    overButton = true;
+    clearTimeout(hideTimer);
+    hideTimer = 0;
+  });
+  host.addEventListener("pointerleave", () => {
+    overButton = false;
+    hideSoon();
+  });
   const follow = () => host.style.display !== "none" && place();
   window.addEventListener("scroll", follow, { capture: true, passive: true });
   window.addEventListener("resize", follow, { passive: true });

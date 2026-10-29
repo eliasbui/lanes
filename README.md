@@ -38,7 +38,7 @@ bar, and is in English and Vietnamese.
   Cookie and User-Agent of the page, which is what gets most "403 Forbidden" downloads through. Works in Chrome, Edge,
   Brave and Cốc Cốc; a right-click "Download with Lanes" is there too. If Lanes is not running, the extension starts
   it in the menu bar so the download begins at once.
-- **Video button.** Hover a video and a "Tải video" button appears in its corner; it lists what Lanes can download
+- **Video button.** Hover a video and a "Tải video" button with the Lanes mark appears under it, as in IDM (inside its bottom corner when the video reaches the bottom of the window); it lists what Lanes can download
   for that video by resolution (1080p, 720p, ...) with the size or an estimate. Whole video files go through the
   normal multi-connection engine; HLS streams (`.m3u8`) are fetched segment by segment in parallel, AES-128 included,
   resumable, and joined into one `.ts` or `.mp4`. Not supported yet: YouTube and other DASH streams, live streams,
