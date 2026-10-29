@@ -1,10 +1,9 @@
-//! Video pages whose player Lanes cannot read itself, YouTube first and the DASH sites after it, through yt-dlp: it
-//! lists a page's formats, and downloads the one picked, video and sound joined by ffmpeg. yt-dlp is the user's own
-//! install (Homebrew, winget), looked for where those put it, since a browser or Finder starts the app with a bare
-//! PATH. ffmpeg comes with the app (scripts/build-ffmpeg.sh), the user's own only in a build made without it. Without
-//! ffmpeg only formats that carry their own sound are offered, which on YouTube is 360p.
-//! ponytail: user-installed yt-dlp and deno; have the app fetch them itself when asking users to install them proves
-//! too much.
+//! Video pages Lanes cannot read itself (src/extract reads YouTube, Facebook, Instagram, TikTok, X and what a page
+//! names plainly), through yt-dlp when the user has it: it lists a page's formats, and downloads the one picked, video
+//! and sound joined by ffmpeg. yt-dlp is the user's own install (Homebrew, winget), looked for where those put it,
+//! since a browser or Finder starts the app with a bare PATH. ffmpeg comes with the app (scripts/build-ffmpeg.sh), the
+//! user's own only in a build made without it. Without ffmpeg only formats that carry their own sound are offered,
+//! which on YouTube is 360p.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -72,7 +71,7 @@ const FFMPEG: &[u8] = include_bytes!(env!("LANES_FFMPEG"));
 const FFMPEG: &[u8] = &[];
 
 /// ffmpeg: the one the app carries, put in the data folder, or else the user's own.
-fn ffmpeg() -> Option<PathBuf> {
+pub(crate) fn ffmpeg() -> Option<PathBuf> {
     let carried = crate::data_dir().join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
     (!FFMPEG.is_empty() && put_program(&carried, FFMPEG)).then_some(carried).or_else(|| program("ffmpeg"))
 }
@@ -127,9 +126,81 @@ fn error_of(stderr: &str, fallback: &str) -> String {
     line.trim_start_matches("ERROR:").trim().chars().take(300).collect()
 }
 
+/// The browser's cookies for a page, in a file yt-dlp reads with `--cookies`, so a site that shows a video only to
+/// someone signed in (Facebook, Instagram, X) shows it to yt-dlp too. The file is readable by this user only and goes
+/// when yt-dlp is done.
+struct Cookies(PathBuf);
+
+impl Drop for Cookies {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn cookies(url: &str, headers: &[(String, String)]) -> Option<Cookies> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let header = headers.iter().find(|(name, _)| name.eq_ignore_ascii_case("cookie"))?;
+    let text = cookie_file(url, &header.1)?;
+    let path = std::env::temp_dir().join(format!("lanes-cookies-{}-{}.txt", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    std::io::Write::write_all(&mut options.open(&path).ok()?, text.as_bytes()).ok()?;
+    Some(Cookies(path))
+}
+
+/// A Cookie header sent to `url` as a Netscape cookie file, each cookie for that site and its subdomains.
+fn cookie_file(url: &str, header: &str) -> Option<String> {
+    let site = site(url)?;
+    let mut text = String::from("# Netscape HTTP Cookie File\n");
+    for (name, value) in header.split(';').filter_map(|pair| pair.trim().split_once('=')) {
+        if !name.is_empty() && !format!("{name}{value}").contains(['\t', '\r', '\n']) {
+            text += &format!(".{site}\tTRUE\t/\tFALSE\t0\t{name}\t{value}\n");
+        }
+    }
+    Some(text)
+}
+
+/// The host of `url` without `www.` or `m.`.
+fn site(url: &str) -> Option<String> {
+    let host = url::Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
+    Some(host.strip_prefix("www.").or_else(|| host.strip_prefix("m.")).unwrap_or(&host).to_owned())
+}
+
+fn youtube(url: &str) -> bool {
+    site(url).is_some_and(|site| ["youtube.com", "youtu.be", "youtube-nocookie.com"].iter().any(|y| site == *y || site.ends_with(&format!(".{y}"))))
+}
+
+/// What is said when a page shows the video only to someone signed in, in place of yt-dlp's advice about its options.
+pub const SIGN_IN: &str = "Video này chỉ xem được khi đã đăng nhập (giới hạn độ tuổi, dành cho hội viên hoặc riêng tư). Hãy đăng nhập trang đó trong trình duyệt rồi bấm lại.";
+
+/// Runs `run` with the file of the browser's cookies for the page. YouTube first goes without them and has them only
+/// when it asks for someone signed in (an age check, a members' video), since yt-dlp warns that an account it uses
+/// may be flagged. yt-dlp asks for cookies by naming its `--cookies` option.
+fn signed_in<T>(url: &str, headers: &[(String, String)], run: impl Fn(Option<&Path>) -> Result<T, String>) -> Result<T, String> {
+    let jar = cookies(url, headers);
+    let jar = jar.as_ref().map(|jar| jar.0.as_path());
+    let wants = |e: &String| e.contains("--cookies");
+    let result = match run(jar.filter(|_| !youtube(url))) {
+        Err(e) if wants(&e) && youtube(url) && jar.is_some() => run(jar),
+        other => other,
+    };
+    result.map_err(|e| if wants(&e) { SIGN_IN.into() } else { e })
+}
+
 /// The formats of the page at `url`, as the menu offers them.
-pub fn formats(url: &str) -> Result<Formats, String> {
-    let out = yt_dlp()?.args(["-J", "--no-playlist", "--no-warnings", "--", url]).output().map_err(|e| format!("Không chạy được yt-dlp: {e}"))?;
+pub fn formats(url: &str, headers: &[(String, String)]) -> Result<Formats, String> {
+    signed_in(url, headers, |jar| list(url, jar))
+}
+
+fn list(url: &str, jar: Option<&Path>) -> Result<Formats, String> {
+    let mut command = yt_dlp()?;
+    if let Some(jar) = jar {
+        command.arg("--cookies").arg(jar);
+    }
+    let out = command.args(["-J", "--no-playlist", "--no-warnings", "--", url]).output().map_err(|e| format!("Không chạy được yt-dlp: {e}"))?;
     if !out.status.success() {
         return Err(error_of(&String::from_utf8_lossy(&out.stderr), "yt-dlp không đọc được trang này"));
     }
@@ -234,11 +305,20 @@ pub fn valid_format(format: &str) -> bool {
 ///
 /// yt-dlp's end is its exit, not the end of its output: a process started alongside it (another download's yt-dlp, its
 /// ffmpeg) can hold the output pipe open after it is gone, so the readers run on their own and are not waited for.
-pub fn download(url: &str, format: &str, final_path: &Path, temp: &Path, proxy: Option<&str>, progress: impl Fn(u64), stop: impl Fn() -> bool) -> Result<u64, String> {
+#[allow(clippy::too_many_arguments)]
+pub fn download(url: &str, headers: &[(String, String)], format: &str, final_path: &Path, temp: &Path, proxy: Option<&str>, progress: impl Fn(u64), stop: impl Fn() -> bool) -> Result<u64, String> {
+    signed_in(url, headers, |jar| fetch(url, jar, format, final_path, temp, proxy, &progress, &stop))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fetch(url: &str, jar: Option<&Path>, format: &str, final_path: &Path, temp: &Path, proxy: Option<&str>, progress: &impl Fn(u64), stop: &impl Fn() -> bool) -> Result<u64, String> {
     let (Some(home), Some(name)) = (final_path.parent(), final_path.file_name()) else {
         return Err("Đường dẫn lưu không hợp lệ".into());
     };
     let mut command = yt_dlp()?;
+    if let Some(jar) = jar {
+        command.arg("--cookies").arg(jar);
+    }
     command.args(["--no-playlist", "--quiet", "--progress", "--newline", "--no-warnings", "--no-mtime", "-f", format]);
     command.args(["--progress-template", "download:lanes %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s"]);
     command.args(["--merge-output-format", "mp4"]);
@@ -285,7 +365,7 @@ pub fn download(url: &str, format: &str, final_path: &Path, temp: &Path, proxy: 
             Err(e) => return Err(format!("yt-dlp bị lỗi: {e}")),
         }
     };
-    progressed.try_iter().for_each(&progress);
+    progressed.try_iter().for_each(progress);
     match status.success() && final_path.is_file() {
         true => Ok(std::fs::metadata(final_path).map(|m| m.len()).unwrap_or(0)),
         false => {
@@ -353,6 +433,49 @@ mod tests {
             f("312", "mp4", Some(1080), "avc1.64002A", "none", 60, None),
             f("401", "mp4", Some(2160), "av01.0.13M.08", "none", 60, Some(712)),
         ]})
+    }
+
+    #[test]
+    fn the_browser_cookies_go_to_yt_dlp_for_the_site_only() {
+        let file = cookie_file("https://www.facebook.com/reel/1", "c_user=7; xs=a:b=c ; bad; tab=x\ty").unwrap();
+        assert_eq!(file, "# Netscape HTTP Cookie File\n.facebook.com\tTRUE\t/\tFALSE\t0\tc_user\t7\n.facebook.com\tTRUE\t/\tFALSE\t0\txs\ta:b=c\n");
+        assert!(cookie_file("https://m.facebook.com/watch/?v=1", "a=1").unwrap().starts_with("# Netscape HTTP Cookie File\n.facebook.com\t"));
+        assert!(cookie_file("https://www.youtube.com/watch?v=x", "SID=1").unwrap().contains(".youtube.com\tTRUE\t/\tFALSE\t0\tSID\t1"));
+        let jar = cookies("https://x.com/a/status/1", &[("Cookie".into(), "auth_token=1".into())]).unwrap();
+        let path = jar.0.clone();
+        assert!(fs::read_to_string(&path).unwrap().contains(".x.com\tTRUE\t/\tFALSE\t0\tauth_token\t1"));
+        #[cfg(unix)]
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&fs::metadata(&path).unwrap().permissions()) & 0o777, 0o600);
+        drop(jar);
+        assert!(!path.exists(), "the file goes with yt-dlp");
+        assert!(cookies("https://x.com/a", &[]).is_none(), "no cookies, no file");
+    }
+
+    #[test]
+    fn youtube_has_the_cookies_only_once_it_asks_for_someone_signed_in() {
+        use std::cell::RefCell;
+        let cookie = [("Cookie".to_owned(), "SID=1".to_owned())];
+        let age = "[youtube] x: Sign in to confirm your age. Use --cookies-from-browser or --cookies for the authentication.";
+        let tries = RefCell::new(Vec::new());
+        let run = |jar: Option<&Path>| {
+            tries.borrow_mut().push(jar.is_some());
+            if jar.is_some() { Ok(1) } else { Err(age.to_owned()) }
+        };
+        assert_eq!(signed_in("https://www.youtube.com/watch?v=x", &cookie, run), Ok(1));
+        assert_eq!(*tries.borrow(), [false, true], "without, then with");
+        tries.borrow_mut().clear();
+        assert_eq!(signed_in("https://www.youtube.com/watch?v=x", &[], run), Err(SIGN_IN.to_owned()), "not signed in in the browser");
+        assert_eq!(*tries.borrow(), [false]);
+        tries.borrow_mut().clear();
+        let fine = |jar: Option<&Path>| {
+            tries.borrow_mut().push(jar.is_some());
+            Ok::<_, String>(2)
+        };
+        assert_eq!(signed_in("https://www.youtube.com/watch?v=x", &cookie, fine), Ok(2));
+        assert_eq!(signed_in("https://www.facebook.com/reel/1", &cookie, fine), Ok(2));
+        assert_eq!(*tries.borrow(), [false, true], "YouTube goes without when it can; other sites have them at once");
+        let other = |_: Option<&Path>| Err::<u8, _>("HTTP Error 404".to_owned());
+        assert_eq!(signed_in("https://www.youtube.com/watch?v=x", &cookie, other), Err("HTTP Error 404".to_owned()), "other errors are left as they are");
     }
 
     #[test]

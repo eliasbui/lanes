@@ -34,14 +34,17 @@ sha2 = "0.10"
 url = "2"
 aes = "0.8"
 cbc = "0.1"
+# YouTube for signed-in viewers (src/extract/jsc.rs): its addresses carry a signature and an `n` value that the
+# player's own script transforms, run in an embedded QuickJS by the solver of yt-dlp's EJS project; and the SAPISIDHASH
+# its API wants from a signed-in session is a SHA-1.
+rquickjs = "0.14"
+sha1 = "0.10"
+# TikTok's "please wait" page asks for a proof of work in base64 (src/extract/tiktok.rs).
+base64 = "0.22"
 # The Downloads folder and the home, wherever the system keeps them.
 dirs = "7"
 # The tray and window icons are decoded from PNG at startup.
 png = "0.18"
-
-[dev-dependencies]
-# Only the test that checks the extension id matches its key decodes base64.
-base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # net-merge: the interfaces and their addresses (getifaddrs).

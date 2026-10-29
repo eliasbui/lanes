@@ -350,13 +350,16 @@ function hlsItem(v, reply, title) {
 }
 
 function pageItem(c, reply, url) {
+  // Sound alone has no height; a picture whose height the page does not give is named by its type.
+  const audio = !c.height && c.ext === "m4a";
   return {
     kind: "page",
     url,
     format: c.format,
     height: c.height || 0,
     size: c.size || 0,
-    label: c.height ? `${c.height}p` : "Chỉ âm thanh",
+    audio,
+    label: c.height ? `${c.height}p` : audio ? "Chỉ âm thanh" : c.ext.toUpperCase(),
     detail: [c.ext.toUpperCase(), c.size ? `khoảng ${human(c.size)}` : ""].filter(Boolean).join(" · "),
     filename: nameFor(reply.title, c.height, c.ext),
   };
@@ -403,11 +406,12 @@ async function streams(sender, { sources = [], direct = false, others = [], titl
     else if (!named.has(m.url)) items.push(...reply.variants.map((v) => hlsItem(v, reply, title)));
   }
 
-  // YouTube, or a page where nothing was found above: the app asks yt-dlp. Elsewhere its failure says no more than
-  // "nothing found", unless yt-dlp is missing. A YouTube video played away from its own page is read from the page
-  // the button found for it (content.js).
+  // YouTube, or a page where nothing was found above: the app asks yt-dlp, with the page's cookies so a video shown
+  // only to someone signed in is shown to it too (YouTube has them only once it asks for that, src/ytdlp.rs). A video
+  // played away from its own page is read from the page the button found for it (content.js). yt-dlp's failure is
+  // said, unless it only means the site is not one it knows.
   const youtube = YOUTUBE.test(referrer);
-  const target = youtube && !YOUTUBE_VIDEO.test(referrer) && YOUTUBE_VIDEO.test(page) ? page : referrer;
+  const target = page || referrer;
   if (youtube && !YOUTUBE_VIDEO.test(target)) {
     notes.push("Hãy mở video này ra trang riêng của nó để tải.");
   } else if (youtube || !items.length) {
@@ -415,11 +419,11 @@ async function streams(sender, { sources = [], direct = false, others = [], titl
     const app = await send({ cmd: "ping" });
     const reply = app.ok && newer("0.4.0", app.version || "0")
       ? { ok: false, missing: true, error: "Cập nhật app Lanes lên bản mới nhất để tải video từ trang này." }
-      : app.ok ? await send({ cmd: "page", url: target }) : app;
+      : app.ok ? await send({ cmd: "page", url: target, cookie: await cookieHeader(target) }) : app;
     if (reply.ok) {
       items.push(...reply.choices.map((c) => pageItem(c, reply, target)));
       if (reply.hint) notes.push(reply.hint);
-    } else if (youtube || reply.missing) {
+    } else if (youtube || reply.missing || !/unsupported url/i.test(reply.error || "")) {
       notes.push(reply.error);
     }
   }

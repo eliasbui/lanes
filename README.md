@@ -43,20 +43,22 @@ bar, and is in English and Vietnamese.
   for a few seconds when the video starts playing; it lists what Lanes can download for that video by resolution (4K,
   2K, 1080p, ...) with the size or an estimate. Whole video files go through the
   normal multi-connection engine; HLS streams (`.m3u8`) are fetched segment by segment in parallel, AES-128 included,
-  resumable, and joined into one `.ts` or `.mp4`. YouTube, and pages where Lanes finds no stream of its own (DASH
-  sites), go through yt-dlp: the menu lists every resolution up to 2160p plus sound only, and the picked one is
-  downloaded and joined into an MP4. Not supported: live streams, and anything with DRM, which Lanes never touches.
+  resumable, and joined into one `.ts` or `.mp4`. Video pages Lanes reads itself: YouTube (every resolution up to
+  4K and the sound alone; a video for signed-in viewers, such as one behind an age check, with the browser's YouTube
+  session), Facebook, Instagram, TikTok and X, and on any other site the video the page names (Open Graph, JSON-LD,
+  its `<video>` tags). The picked version comes in pieces over several connections and its picture and sound are
+  joined into an MP4. Not supported: live streams, and anything with DRM, which Lanes never touches.
 - **Progress in the browser.** What Lanes downloads shows in the browser too: the toolbar button carries the share
   done, a dock in the corner of the page in front fills a ring per download and turns it into a tick when it is done
   (with a button that shows the file in its folder), and the popup lists the latest downloads.
-- **yt-dlp** is needed for YouTube and the DASH sites; Lanes finds it where Homebrew or winget puts it. On macOS:
-  `brew install yt-dlp`. On Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. The ffmpeg that joins a video to
-  its sound (720p to 4K) comes inside Lanes: a 4 MB LGPL build of FFmpeg that only joins streams, made by
-  `scripts/build-ffmpeg.sh` from the FFmpeg source.
+- **Nothing to install.** The ffmpeg that joins a picture to its sound comes inside Lanes: a 4 MB LGPL build of
+  FFmpeg that only joins streams, made by `scripts/build-ffmpeg.sh` from the FFmpeg source. The script that YouTube's
+  player runs on the addresses it gives a signed-in viewer runs in a QuickJS inside Lanes. yt-dlp is used only for a
+  page Lanes cannot read, when it is installed (`brew install yt-dlp`, `winget install yt-dlp.yt-dlp`).
 - **net-merge (beta): every network link at once.** With the switch in Settings on, the connections of a download are spread
   over every network link of the computer (Wi-Fi, Ethernet, a phone on USB with its hotspot on), as
   [net-merge](https://github.com/net-merge/net-merge) does, so one file comes at the speeds of all of them added up:
-  plain files range by range, HLS segment by segment, and yt-dlp pages eight pieces at a time. It needs no
+  plain files range by range, HLS segment by segment, video pages piece by piece, and yt-dlp pages eight pieces at a time. It needs no
   administrator: Lanes' own connections go through a proxy of Lanes on 127.0.0.1 that asks for a password made at
   random, and each leaves by the link it is given; nothing else on the computer changes. The first connection of a
   download to each site takes the system's usual link, another link serves a site only once the system's curl has
@@ -131,7 +133,12 @@ Rust 1.85 or later.
   for a site. The same file is figghost's `crates/core-netmerge/src/lib.rs`.
 - `src/hls.rs` — HLS playlists: resolutions of a master, segments, keys and byte ranges of a media playlist, and
   AES-128 decryption.
-- `src/ytdlp.rs` — video pages through yt-dlp: the formats as menu choices, and the download with its progress.
+- `src/extract/` — video pages read by Lanes: a reader per site (YouTube, Facebook, Instagram, TikTok, X, and one for
+  any page) turns a page into its versions, each a file or a picture and a sound to join; `jsc.rs` solves YouTube's
+  signature and `n` challenges in an embedded QuickJS. The engine fetches them in pieces of at most 10 MiB, the most
+  googlevideo serves at full speed in one request.
+- `src/ytdlp.rs` — video pages through yt-dlp, for a page no reader knows: the formats as menu choices, and the
+  download with its progress.
 - `src/store.rs` — the list of downloads in SQLite.
 - `src/browser.rs` — the native-messaging host, the inbox the extension drops jobs into, and the extension the app
   carries.
@@ -144,7 +151,8 @@ Rust 1.85 or later.
 
 The download list and settings live in `~/Library/Application Support/Lanes` (macOS) or `%APPDATA%\Lanes` (Windows).
 Lanes talks to the servers you download from and to GitHub for the update check; the browser extension sends a job
-only to the local app, never over the network. With net-merge on, and only while a download runs, Lanes now and then
+only to the local app, never over the network. To read a video page, Lanes asks that site with the cookies your
+browser sends it (on YouTube only for a video for signed-in viewers), and sends them nowhere else. With net-merge on, and only while a download runs, Lanes now and then
 opens a TCP connection to 1.1.1.1 and 8.8.8.8 on port 443 over each link, sending nothing, to know which links reach
 the internet, and runs the system's curl once per site and link to ask that site for its headers over it.
 
@@ -154,3 +162,8 @@ MIT. See [LICENSE](LICENSE). Lanes is an original program; it is not affiliated 
 
 `src/netmerge.rs` is the scheduler of [net-merge](https://github.com/net-merge/net-merge) written again in Rust,
 copyright 2026 Rohit Mahto, under the MIT License: see [NET-MERGE-LICENSE.txt](NET-MERGE-LICENSE.txt).
+
+`src/extract/ejs/` is the challenge solver of [yt-dlp's EJS project](https://github.com/yt-dlp/ejs), released into
+the public domain (Unlicense, see [src/extract/ejs/LICENSE](src/extract/ejs/LICENSE)); it bundles meriyah (ISC) and
+astring (MIT), whose notices head `lib.min.js`. The site readers in `src/extract/` follow the logic of yt-dlp's
+extractors, which are public domain too.

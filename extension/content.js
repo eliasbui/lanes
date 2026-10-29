@@ -293,23 +293,32 @@
     return out;
   }
 
-  // The own page of a YouTube video played away from it: a preview in a feed, a channel's trailer, the miniplayer. The
-  // player's title link names it; failing that, the nearest links around the player that all lead to one video. Other
-  // links inside the player are the end screen's suggestions, so the search starts outside it.
-  function videoId(href) {
-    const m = /\/watch\?(?:.*&)?v=([\w-]{11})|\/shorts\/([\w-]{11})/.exec(href || "");
-    return m ? m[1] || m[2] : "";
-  }
+  // The own pages of single videos on the sites that play them in feeds, each with the part that names the video.
+  const VIDEO_PAGES = [
+    /^https:\/\/(?:www\.|m\.)?youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/)([\w-]{11})/,
+    /^https:\/\/(?:www\.|m\.|web\.)?facebook\.com\/(?:reel\/|watch\/?\?(?:.*&)?v=|video\.php\?(?:.*&)?v=|[^/?#]+\/videos\/(?:[^/?#]+\/)?)(\d+)/,
+    /^https:\/\/(?:www\.)?instagram\.com\/(?:[^/?#]+\/)?(?:p|reels?|tv)\/([\w-]+)/,
+    /^https:\/\/(?:www\.)?tiktok\.com\/@[^/?#]+\/video\/(\d+)/,
+    /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/[^/?#]+\/status\/(\d+)/,
+  ];
+  const videoId = (href) => VIDEO_PAGES.map((p) => p.exec(href || "")?.[1]).find(Boolean) || "";
 
+  // The own page of a video played away from it, as a preview in a feed, a post among others or the miniplayer, for
+  // yt-dlp to read: YouTube's title link in the player, else the nearest links around the video that all lead to one
+  // video. Other links inside YouTube's player are the end screen's suggestions, so the search starts outside it. None
+  // on the video's own page, or where the links around it lead to several.
   function pageOf(v) {
+    if (videoId(location.href)) return "";
     const player = v.closest(".html5-video-player") || v;
-    let id = videoId(player.querySelector("a.ytp-title-link")?.href);
-    for (let el = player.parentElement; !id && el; el = el.parentElement) {
-      const ids = new Set([...el.querySelectorAll('a[href*="/watch?"], a[href*="/shorts/"]')].map((a) => videoId(a.href)).filter(Boolean));
+    const title = player.querySelector("a.ytp-title-link")?.href;
+    if (videoId(title)) return title;
+    for (let el = player.parentElement; el; el = el.parentElement) {
+      const links = [...el.querySelectorAll("a[href]")].filter((a) => videoId(a.href));
+      const ids = new Set(links.map((a) => videoId(a.href)));
       if (ids.size > 1) break;
-      [id] = ids;
+      if (ids.size) return links[0].href.split("#")[0];
     }
-    return id ? `https://www.youtube.com/watch?v=${id}` : "";
+    return "";
   }
 
   const nothingFound ="Chưa thấy bản tải được. Hãy phát video vài giây rồi bấm lại. Video có DRM thì không tải được.";
@@ -322,7 +331,7 @@
     const chip = document.createElement("span");
     chip.className = item.height >= 720 ? "chip hd" : "chip";
     if (item.height) chip.textContent = quality(item.height);
-    else if (item.kind === "page") chip.innerHTML = svg("audio");
+    else if (item.audio) chip.innerHTML = svg("audio");
     else chip.textContent = item.label;
     const detail = document.createElement("span");
     detail.className = "detail";
@@ -347,8 +356,7 @@
       // the page loaded, less the files other videos on the page are playing.
       const others = [...document.getElementsByTagName("video")].filter((v) => v !== video).map((v) => v.currentSrc);
       const direct = /^https?:\/\//i.test(video.currentSrc);
-      const page = /(^|\.)youtube(-nocookie)?\.com$/.test(location.hostname) ? pageOf(video) : "";
-      reply = await chrome.runtime.sendMessage({ type: "streams", sources: sourcesOf(video), direct, others, title: document.title, page });
+      reply = await chrome.runtime.sendMessage({ type: "streams", sources: sourcesOf(video), direct, others, title: document.title, page: pageOf(video) });
     } catch {
       reply = { items: [], notes: ["Tiện ích Lanes vừa được cập nhật. Hãy tải lại trang."] };
     }

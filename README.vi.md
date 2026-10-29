@@ -43,20 +43,22 @@ tiếng Việt.
   đầu phát; bấm vào sẽ thấy các bản Lanes tải được cho video đó theo độ phân giải (4K, 2K, 1080p, ...) kèm dung lượng
   hoặc dung lượng ước tính. Tệp video nguyên vẹn đi qua
   engine nhiều kết nối như thường; luồng HLS (`.m3u8`) được tải song song từng đoạn, kể cả mã hóa AES-128, tiếp tục
-  được khi dừng, rồi ghép thành một tệp `.ts` hoặc `.mp4`. YouTube và các trang Lanes không tự tìm ra luồng (trang
-  DASH) đi qua yt-dlp: menu liệt kê mọi độ phân giải tới 2160p và bản chỉ âm thanh, bản được chọn tải về và ghép thành
-  MP4. Không hỗ trợ: phát trực tiếp, và video có DRM (Lanes không bao giờ động tới).
+  được khi dừng, rồi ghép thành một tệp `.ts` hoặc `.mp4`. Lanes tự đọc trang video: YouTube (mọi độ phân giải tới
+  4K và bản chỉ âm thanh; video chỉ cho người đã đăng nhập, như video giới hạn độ tuổi, thì dùng phiên YouTube của
+  trình duyệt), Facebook, Instagram, TikTok và X, còn ở trang khác thì lấy video mà trang tự khai báo (Open Graph,
+  JSON-LD, thẻ `<video>`). Bản được chọn được tải từng phần qua nhiều kết nối, rồi hình và tiếng được ghép thành MP4.
+  Không hỗ trợ: phát trực tiếp, và video có DRM (Lanes không bao giờ động tới).
 - **Tiến độ ngay trên trình duyệt.** Những gì Lanes đang tải cũng hiện trên trình duyệt: nút tiện ích trên thanh công cụ
   ghi phần trăm đã tải, khay ở góc trang đang xem có một vòng tiến độ cho mỗi download và đổi thành dấu tích khi xong
   (kèm nút mở thư mục chứa file), cửa sổ nhỏ của tiện ích liệt kê các download gần nhất.
-- **yt-dlp** cần cho YouTube và các trang DASH; Lanes tự tìm ở chỗ Homebrew hoặc winget cài. macOS:
-  `brew install yt-dlp`. Windows: `winget install yt-dlp.yt-dlp DenoLand.Deno`. ffmpeg để ghép hình với tiếng (720p
-  đến 4K) đã có sẵn trong Lanes: bản FFmpeg 4 MB giấy phép LGPL, chỉ ghép luồng, build từ mã nguồn FFmpeg bằng
-  `scripts/build-ffmpeg.sh`.
+- **Không cần cài thêm gì.** ffmpeg để ghép hình với tiếng đã có sẵn trong Lanes: bản FFmpeg 4 MB giấy phép LGPL, chỉ
+  ghép luồng, build từ mã nguồn FFmpeg bằng `scripts/build-ffmpeg.sh`. Đoạn mã mà trình phát YouTube chạy trên địa chỉ
+  cho người đã đăng nhập được chạy bằng QuickJS có sẵn trong Lanes. yt-dlp chỉ được dùng cho trang Lanes không đọc
+  được, khi máy có cài (`brew install yt-dlp`, `winget install yt-dlp.yt-dlp`).
 - **net-merge (beta): mọi đường mạng cùng lúc.** Bật công tắc trong Cài đặt, các kết nối của một lượt tải được chia ra mọi
   đường mạng của máy (Wi-Fi, Ethernet, điện thoại cắm USB bật điểm truy cập), như
   [net-merge](https://github.com/net-merge/net-merge), nên một tệp được tải bằng tổng tốc độ của các đường: tệp thường
-  theo từng đoạn, HLS theo từng phần, trang qua yt-dlp tám phần một lúc. Không cần quyền quản trị: chỉ kết nối của
+  theo từng đoạn, HLS theo từng phần, trang video theo từng phần, trang qua yt-dlp tám phần một lúc. Không cần quyền quản trị: chỉ kết nối của
   Lanes đi qua một proxy của Lanes trên 127.0.0.1, proxy đòi một mật khẩu tạo ngẫu nhiên, và mỗi kết nối ra khỏi máy
   bằng đường được giao; ngoài ra không thay đổi gì trên máy. Kết nối đầu tiên của một lượt tải tới mỗi trang đi đường
   mạng thường dùng của hệ thống, một đường khác chỉ nhận một trang sau khi curl của hệ thống đã tới được trang đó qua
@@ -129,7 +131,12 @@ Rust 1.85 trở lên.
   trang. Cùng một tệp với `crates/core-netmerge/src/lib.rs` của figghost.
 - `src/hls.rs` — danh sách HLS: các độ phân giải của bản chính, các đoạn, khóa và đoạn byte của một bản, và giải mã
   AES-128.
-- `src/ytdlp.rs` — trang video qua yt-dlp: các định dạng thành lựa chọn trong menu, và việc tải cùng tiến độ.
+- `src/extract/` — trang video do Lanes tự đọc: mỗi trang một bộ đọc (YouTube, Facebook, Instagram, TikTok, X, và một
+  bộ cho trang bất kỳ) biến trang thành các bản, mỗi bản là một tệp hoặc một hình và một tiếng để ghép; `jsc.rs` giải
+  chữ ký và mã `n` của YouTube bằng QuickJS nhúng sẵn. Engine tải chúng theo phần tối đa 10 MiB, mức googlevideo còn
+  cho tải hết tốc độ trong một yêu cầu.
+- `src/ytdlp.rs` — trang video qua yt-dlp, cho trang không bộ đọc nào biết: các định dạng thành lựa chọn trong menu, và
+  việc tải cùng tiến độ.
 - `src/store.rs` — danh sách tải trong SQLite.
 - `src/browser.rs` — native host, hộp thư mà tiện ích thả việc vào, và tiện ích app mang theo.
 - `src/update.rs` — tự cập nhật: đọc bản mới nhất, kiểm tra SHA-256, thay app tại chỗ, khởi động lại.
@@ -141,7 +148,8 @@ Rust 1.85 trở lên.
 
 Danh sách tải và cài đặt nằm trong `~/Library/Application Support/Lanes` (macOS) hoặc `%APPDATA%\Lanes` (Windows).
 Lanes chỉ kết nối tới máy chủ bạn tải và tới GitHub để kiểm tra cập nhật; tiện ích trình duyệt chỉ gửi việc tới app
-trên máy, không gửi ra mạng. Khi bật net-merge, và chỉ trong lúc có lượt tải, Lanes thỉnh thoảng mở một kết nối TCP
+trên máy, không gửi ra mạng. Để đọc một trang video, Lanes hỏi chính trang đó kèm cookie mà trình duyệt gửi cho nó
+(với YouTube thì chỉ khi video dành cho người đã đăng nhập), và không gửi cookie đó đi đâu khác. Khi bật net-merge, và chỉ trong lúc có lượt tải, Lanes thỉnh thoảng mở một kết nối TCP
 tới 1.1.1.1 và 8.8.8.8 cổng 443 qua từng đường mạng, không gửi gì, để biết đường nào ra được internet, và chạy curl
 của hệ thống một lần cho mỗi cặp trang và đường mạng để hỏi phần đầu của trang đó qua đường ấy.
 
@@ -151,3 +159,8 @@ MIT. Xem [LICENSE](LICENSE). Lanes là chương trình độc lập, không liê
 
 `src/netmerge.rs` là bộ lập lịch của [net-merge](https://github.com/net-merge/net-merge) viết lại bằng Rust, bản
 quyền 2026 Rohit Mahto, theo giấy phép MIT: xem [NET-MERGE-LICENSE.txt](NET-MERGE-LICENSE.txt).
+
+`src/extract/ejs/` là bộ giải của [dự án EJS của yt-dlp](https://github.com/yt-dlp/ejs), thuộc phạm vi công cộng
+(Unlicense, xem [src/extract/ejs/LICENSE](src/extract/ejs/LICENSE)); nó đi kèm meriyah (ISC) và astring (MIT), lời
+giấy phép của hai thư viện này nằm ở đầu `lib.min.js`. Các bộ đọc trong `src/extract/` theo logic các extractor của
+yt-dlp, cũng thuộc phạm vi công cộng.

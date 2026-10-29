@@ -11,7 +11,7 @@
 //! half of what is left of the largest one, as IDM does, so a fast connection, or a fast network link with net-merge,
 //! keeps working while a slow one would otherwise hold up the end of the file.
 
-use crate::{hls, netmerge, ytdlp};
+use crate::{extract, hls, netmerge, ytdlp};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -58,7 +58,8 @@ pub enum Kind {
     File,
     /// An HLS playlist from the video button, its segments joined into the file (`run_hls`).
     Hls,
-    /// A video page (YouTube and the like) that yt-dlp reads, with the format picked in the video button (`run_page`).
+    /// A video page (YouTube and the like) with the format picked in the video button: one Lanes reads itself
+    /// (`extract::PREFIX` and a variant's id, `run_media`), or one of yt-dlp's (`run_page`).
     Page { format: String },
 }
 
@@ -548,7 +549,12 @@ impl Engine {
     fn run(&self, task: Arc<Task>, resume: Option<Meta>) {
         match &task.kind {
             Kind::Hls => return self.run_hls(&task),
-            Kind::Page { format } => return run_page(&task, format),
+            Kind::Page { format } => {
+                return match format.strip_prefix(extract::PREFIX) {
+                    Some(id) => self.run_media(&task, id),
+                    None => run_page(&task, format),
+                };
+            }
             Kind::File => {}
         }
         let probe = match resume.as_ref() {
@@ -687,50 +693,12 @@ impl Engine {
         if let Err(e) = fs::create_dir_all(&folder) {
             return task.set_error(format!("Không tạo được thư mục tạm: {e}"));
         }
-        let count = media.segments.len();
-        let workers = self.connection_count().min(count);
-        if let Ok(mut slot) = task.segments.lock() {
-            *slot = (0..workers).map(|_| Part::idle()).collect();
-        }
         task.downloaded.store(0, Ordering::Relaxed);
-        let keys = Mutex::new(HashMap::new());
-        let mut parts = Vec::with_capacity(count + 1);
-        if let Some(init) = &media.init {
-            let path = folder.join("init");
-            if let Err(e) = keep_part(task, init, &path, &keys) {
-                return task.set_error(e);
-            }
-            parts.push(path);
-        }
-        parts.extend((0..count).map(|i| folder.join(format!("{i:06}"))));
-
-        let next = AtomicUsize::new(0);
-        let (kept, finished) = (AtomicU64::new(0), AtomicU64::new(0));
-        let first = parts.len() - count;
-        let all_ok = thread::scope(|scope| {
-            let worker = || loop {
-                let i = next.fetch_add(1, Ordering::SeqCst);
-                let Some(segment) = media.segments.get(i) else { return true };
-                match keep_part(task, segment, &parts[first + i], &keys) {
-                    Ok(size) => {
-                        let kept = kept.fetch_add(size, Ordering::Relaxed) + size;
-                        let finished = finished.fetch_add(1, Ordering::Relaxed) + 1;
-                        task.total.store(kept / finished * count as u64, Ordering::Relaxed);
-                    }
-                    Err(e) => {
-                        if !task.paused_or_removed() {
-                            task.set_error(e);
-                        }
-                        return false;
-                    }
-                }
-            };
-            let handles: Vec<_> = (0..workers).map(|_| scope.spawn(worker)).collect();
-            handles.into_iter().all(|h| h.join().unwrap_or(false))
-        });
-        if !all_ok || task.paused_or_removed() {
+        let pieces = playlist_pieces(media, &folder, &task.headers, &task.url);
+        if !self.keep_all(task, &pieces, true) {
             return;
         }
+        let parts: Vec<PathBuf> = pieces.into_iter().map(|p| p.path).collect();
         match join_parts(&parts, &folder, &task.final_path) {
             Ok(size) => {
                 task.total.store(size, Ordering::Relaxed);
@@ -741,6 +709,160 @@ impl Engine {
             Err(e) => task.set_error(format!("Không ghép được video: {e}")),
         }
     }
+}
+
+impl Engine {
+    /// The pieces several at a time, each kept in its own file as `keep_part` does; says whether all are there. With
+    /// `estimate` the size shown is worked out from the pieces so far, for a playlist whose size nobody gives.
+    fn keep_all(&self, task: &Task, pieces: &[Piece], estimate: bool) -> bool {
+        let count = pieces.len();
+        let workers = self.connection_count().min(count).max(1);
+        if let Ok(mut slot) = task.segments.lock() {
+            *slot = (0..workers).map(|_| Part::idle()).collect();
+        }
+        let keys = Mutex::new(HashMap::new());
+        let next = AtomicUsize::new(0);
+        let (kept, finished) = (AtomicU64::new(0), AtomicU64::new(0));
+        thread::scope(|scope| {
+            let worker = || loop {
+                let i = next.fetch_add(1, Ordering::SeqCst);
+                let Some(piece) = pieces.get(i) else { return true };
+                match keep_part(task, piece, &keys) {
+                    Ok(size) if estimate => {
+                        let kept = kept.fetch_add(size, Ordering::Relaxed) + size;
+                        let finished = finished.fetch_add(1, Ordering::Relaxed) + 1;
+                        task.total.store(kept / finished * count as u64, Ordering::Relaxed);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        if !task.paused_or_removed() {
+                            task.set_error(e);
+                        }
+                        return false;
+                    }
+                }
+            };
+            let handles: Vec<_> = (0..workers).map(|_| scope.spawn(worker)).collect();
+            handles.into_iter().all(|h| h.join().unwrap_or(false))
+        }) && !task.paused_or_removed()
+    }
+
+    /// A video page Lanes reads itself (src/extract): the variant picked in the video button, read again from the page
+    /// since stream addresses expire. Each stream comes in pieces (`extract::PIECE` at most, which googlevideo needs to
+    /// serve fast), kept as numbered files in a folder beside the final file so a resume skips the ones already there;
+    /// each stream is joined, and a picture and a sound are put together by ffmpeg.
+    fn run_media(&self, task: &Task, id: &str) {
+        let read = extract::read(&task.url, &task.headers).and_then(|video| video.variants.into_iter().find(|v| v.id == id).ok_or_else(|| "Trang không còn bản này, hãy chọn lại trong nút Tải video".to_owned()));
+        let variant = match read {
+            Ok(variant) => variant,
+            Err(e) => return task.set_error(e),
+        };
+        let folder = part_of(&task.final_path);
+        if let Err(e) = fs::create_dir_all(&folder) {
+            return task.set_error(format!("Không tạo được thư mục tạm: {e}"));
+        }
+        let streams = variant.streams();
+        let (mut pieces, mut ends) = (Vec::new(), Vec::new());
+        for (k, stream) in streams.iter().enumerate() {
+            // The pieces of each stream are named by its place and size, so a resume never mixes two versions of it.
+            let dir = folder.join(format!("{k}-{}", stream.size.unwrap_or(0)));
+            if let Err(e) = fs::create_dir_all(&dir) {
+                return task.set_error(format!("Không tạo được thư mục tạm: {e}"));
+            }
+            let mut these = if stream.hls {
+                match hls::load(&stream.url, &stream.headers) {
+                    Ok(media) => playlist_pieces(media, &dir, &stream.headers, &stream.url),
+                    Err(e) => return task.set_error(e),
+                }
+            } else {
+                let size = stream.size.or_else(|| probe(&stream.url, &stream.headers).ok().and_then(|p| p.size));
+                range_pieces(&stream.url, size, &dir, &stream.headers)
+            };
+            pieces.append(&mut these);
+            ends.push(pieces.len());
+        }
+        let sized = streams.iter().all(|s| !s.hls && s.size.is_some());
+        if sized {
+            task.total.store(variant.size().unwrap_or(0), Ordering::Relaxed);
+        }
+        task.downloaded.store(0, Ordering::Relaxed);
+        if !self.keep_all(task, &pieces, !sized) {
+            return;
+        }
+        // Each stream into one file, then the picture and the sound into the final one.
+        let mut joined = Vec::new();
+        let mut start = 0;
+        for (k, (stream, end)) in streams.iter().zip(&ends).enumerate() {
+            let parts: Vec<PathBuf> = pieces[start..*end].iter().map(|p| p.path.clone()).collect();
+            let path = folder.join(format!("stream{k}.{}", stream.ext));
+            if let Err(e) = join_parts(&parts, &folder, &path) {
+                return task.set_error(format!("Không nối được video: {e}"));
+            }
+            joined.push(path);
+            start = *end;
+        }
+        let made = match joined.as_slice() {
+            [one] => fs::rename(one, &task.final_path).map_err(|e| format!("Không đổi tên được tệp: {e}")),
+            [picture, sound] => mux(picture, sound, &folder, &task.final_path),
+            _ => Err("Bản này không có luồng nào".into()),
+        };
+        match made.and_then(|()| fs::metadata(&task.final_path).map(|m| m.len()).map_err(|e| e.to_string())) {
+            Ok(size) => {
+                task.total.store(size, Ordering::Relaxed);
+                task.downloaded.store(size, Ordering::Relaxed);
+                let _ = fs::remove_dir_all(&folder);
+                task.state.store(state::DONE, Ordering::SeqCst);
+            }
+            Err(e) => task.set_error(e),
+        }
+    }
+}
+
+/// One piece to keep in its own file: a segment of a playlist, or a byte range of a stream, and the headers its server
+/// wants. A cookie among them goes only to the host of `origin`, the address they were chosen for (hls::headers_for).
+struct Piece<'a> {
+    segment: hls::Segment,
+    path: PathBuf,
+    headers: &'a [(String, String)],
+    origin: &'a str,
+}
+
+/// The pieces of a playlist first fetched at `origin` in order, its init part first, as numbered files in `folder`.
+fn playlist_pieces<'a>(media: hls::Media, folder: &Path, headers: &'a [(String, String)], origin: &'a str) -> Vec<Piece<'a>> {
+    let init = media.init.map(|segment| Piece { segment, path: folder.join("init"), headers, origin });
+    let segments = media.segments.into_iter().enumerate().map(|(i, segment)| Piece { segment, path: folder.join(format!("{i:06}")), headers, origin });
+    init.into_iter().chain(segments).collect()
+}
+
+/// A stream of `size` bytes as ranges of at most `extract::PIECE`, or as one piece when its size is not known. Its
+/// headers are the ones its reader chose for it, so they go to its own host as they are.
+fn range_pieces<'a>(url: &'a str, size: Option<u64>, folder: &Path, headers: &'a [(String, String)]) -> Vec<Piece<'a>> {
+    let piece = |i: usize, range| Piece { segment: hls::Segment { url: url.to_owned(), range, key: None, sequence: 0 }, path: folder.join(format!("{i:06}")), headers, origin: url };
+    match size {
+        Some(size) if size > 0 => (0..size).step_by(extract::PIECE as usize).enumerate().map(|(i, from)| piece(i, Some((from, extract::PIECE.min(size - from))))).collect(),
+        _ => vec![piece(0, None)],
+    }
+}
+
+/// A picture and a sound into one MP4 by the ffmpeg the app carries, without encoding them again.
+fn mux(picture: &Path, sound: &Path, folder: &Path, final_path: &Path) -> Result<(), String> {
+    let ffmpeg = ytdlp::ffmpeg().ok_or("Thiếu ffmpeg để ghép hình và tiếng")?;
+    let out = folder.join("joined.mp4");
+    let done = crate::cmd(&ffmpeg.to_string_lossy())
+        .args(["-nostdin", "-loglevel", "error", "-y", "-i"])
+        .arg(picture)
+        .arg("-i")
+        .arg(sound)
+        .args(["-map", "0:v:0", "-map", "1:a:0", "-c", "copy", "-movflags", "+faststart"])
+        .arg(&out)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("Không chạy được ffmpeg: {e}"))?;
+    if !done.status.success() {
+        let error = String::from_utf8_lossy(&done.stderr);
+        return Err(format!("Không ghép được hình và tiếng: {}", error.lines().last().unwrap_or_default()));
+    }
+    fs::rename(&out, final_path).map_err(|e| format!("Không đổi tên được tệp: {e}"))
 }
 
 /// A video page through yt-dlp (src/ytdlp.rs), its pieces kept in the folder beside the file so a resume carries on.
@@ -754,7 +876,7 @@ fn run_page(task: &Task, format: &str) {
         *slot = vec![Part::idle()];
     }
     let progress = |done| task.downloaded.store(done, Ordering::Relaxed);
-    match ytdlp::download(&task.url, format, &task.final_path, &folder, task.via_ytdlp.as_deref(), progress, || task.paused_or_removed()) {
+    match ytdlp::download(&task.url, &task.headers, format,&task.final_path, &folder, task.via_ytdlp.as_deref(), progress, || task.paused_or_removed()) {
         Ok(size) => {
             task.total.store(size, Ordering::Relaxed);
             task.downloaded.store(size, Ordering::Relaxed);
@@ -779,7 +901,8 @@ pub fn discard(final_path: &Path) {
 
 /// One HLS segment, or the init part, into its own file: kept as it is when a resume finds it there, otherwise
 /// fetched with retries and decrypted when the playlist gives it a key. Gives the file's size.
-fn keep_part(task: &Task, segment: &hls::Segment, path: &Path, keys: &Mutex<HashMap<String, Vec<u8>>>) -> Result<u64, String> {
+fn keep_part(task: &Task, piece: &Piece, keys: &Mutex<HashMap<String, Vec<u8>>>) -> Result<u64, String> {
+    let (segment, path) = (&piece.segment, piece.path.as_path());
     if let Ok(meta) = fs::metadata(path) {
         task.downloaded.fetch_add(meta.len(), Ordering::Relaxed);
         return Ok(meta.len());
@@ -789,7 +912,7 @@ fn keep_part(task: &Task, segment: &hls::Segment, path: &Path, keys: &Mutex<Hash
         if task.paused_or_removed() {
             return Err("Đã dừng".into());
         }
-        let fetched = fetch_counted(task, segment).and_then(|body| match &segment.key {
+        let fetched = fetch_counted(task, piece).and_then(|body| match &segment.key {
             Some(key) => hls::decrypt(&key_bytes(task, &key.url, keys)?, key.iv.unwrap_or_else(|| hls::sequence_iv(segment.sequence)), body),
             None => Ok(body),
         });
@@ -816,8 +939,9 @@ fn keep_part(task: &Task, segment: &hls::Segment, path: &Path, keys: &Mutex<Hash
 }
 
 /// The body of one HLS part, counted into the progress as it arrives; what was counted is taken back on a failure.
-fn fetch_counted(task: &Task, segment: &hls::Segment) -> Result<Vec<u8>, String> {
-    let mut reader = hls::open(&segment.url, segment.range, &task.url, &task.headers, task.via.as_deref())?;
+fn fetch_counted(task: &Task, piece: &Piece) -> Result<Vec<u8>, String> {
+    let segment = &piece.segment;
+    let mut reader = hls::open(&segment.url, segment.range, piece.origin, piece.headers, task.via.as_deref())?;
     let mut body = Vec::new();
     let mut buf = vec![0u8; CHUNK];
     let result = loop {
@@ -1479,6 +1603,41 @@ mod tests {
         std::io::copy(&mut fs::File::open(&path).unwrap(), &mut hasher).unwrap();
         let got: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(got, want);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A video page read by Lanes itself (YouTube unless `LANES_VIDEO` names another), its streams fetched in pieces and
+    /// joined by ffmpeg. Live, and it needs an ffmpeg on PATH:
+    /// `LANES_VIDEO=<page> LANES_HEIGHT=1080 cargo test media_from_a_page -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn media_from_a_page() {
+        let page = std::env::var("LANES_VIDEO").unwrap_or_else(|_| "https://www.youtube.com/watch?v=jNQXAC9IVRw".into());
+        let video = extract::read(&page, &[]).expect("the page is read");
+        let height = std::env::var("LANES_HEIGHT").ok().and_then(|h| h.parse().ok());
+        let choice = extract::choices(&video).into_iter().find(|c| height.is_none() || c.height == height).expect("a choice");
+        println!("{}: {} {:?} {:?}", video.title, choice.format, choice.height, choice.size);
+        let dir = std::env::temp_dir().join(format!("lanes-media-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("video.mp4");
+        let engine = std::sync::Arc::new(Engine::new());
+        engine.set_connections(8);
+        let started = std::time::Instant::now();
+        engine.start(1, vec![page], path.clone(), Vec::new(), Kind::Page { format: choice.format });
+        loop {
+            let snap = engine.snapshots().into_iter().next().expect("the task is listed");
+            match snap.state {
+                state::DONE => break,
+                state::ERROR => panic!("download failed: {}", snap.error),
+                _ => thread::sleep(Duration::from_millis(200)),
+            }
+        }
+        let size = fs::metadata(&path).unwrap().len();
+        let seconds = started.elapsed().as_secs_f64();
+        println!("{size} bytes in {seconds:.1} s, {:.1} MB/s", size as f64 / seconds / 1e6);
+        let probe = std::process::Command::new(ytdlp::ffmpeg().unwrap()).arg("-i").arg(&path).output().unwrap();
+        let info = String::from_utf8_lossy(&probe.stderr);
+        assert!(info.contains("Video:") && info.contains("Audio:"), "one file with a picture and a sound: {info}");
         fs::remove_dir_all(&dir).unwrap();
     }
 }

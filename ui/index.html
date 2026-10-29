@@ -664,6 +664,9 @@
         list: render,
         net: renderNet,
         toast,
+        // From the menu bar and the tray.
+        settings: () => openSheet(true),
+        autostart: (on) => ($("autostart").checked = on),
         update(d) {
           $("bannerTxt").innerHTML = `Có bản <b>Lanes ${esc(d.latest)}</b>. Bạn đang dùng ${esc(d.current)}.`;
           $("banner").classList.add("show");

@@ -4,7 +4,9 @@
 mod autostart;
 mod browser;
 mod engine;
+mod extract;
 mod hls;
+mod menus;
 mod netmerge;
 mod store;
 mod ytdlp;
@@ -30,7 +32,7 @@ use tao::{
 };
 use tray_icon::{
     MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
-    menu::{Menu, MenuEvent, MenuId, MenuItem},
+    menu::{MenuEvent, MenuId},
 };
 use wry::{WebView, WebViewBuilder, http::Request};
 
@@ -228,19 +230,27 @@ fn main() {
         settings,
         proxy,
         window: None,
+        page_ready: false,
+        queued: Vec::new(),
         tray: None,
-        open_id: None,
-        quit_id: None,
+        tray_menu: None,
+        status: String::new(),
         speeds: HashMap::new(),
         published: String::new(),
     };
     // Pick up where downloads that were running last time left off.
     app.resume_unfinished();
+    #[cfg(target_os = "macos")]
+    let menu_bar = menus::menu_bar();
 
     event_loop.run(move |event, target, flow| {
         *flow = ControlFlow::Wait;
         match event {
             Event::NewEvents(tao::event::StartCause::Init) => {
+                #[cfg(target_os = "macos")]
+                if let Some(bar) = &menu_bar {
+                    bar.install();
+                }
                 app.make_tray();
                 if !background {
                     app.show(target);
@@ -251,19 +261,15 @@ fn main() {
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 // The app stays in the tray so downloads keep running.
                 app.window = None;
+                app.page_ready = false;
             }
             Event::UserEvent(UserEvent::Ipc(body)) => app.ipc(&body, target),
             Event::UserEvent(UserEvent::Post(message)) => app.post(&message),
             Event::UserEvent(UserEvent::Added(req)) => app.add(req),
             Event::UserEvent(UserEvent::Tick) => app.tick(),
             Event::UserEvent(UserEvent::TrayClick) => app.show(target),
-            Event::UserEvent(UserEvent::Menu(id)) => {
-                if app.quit_id.as_ref() == Some(&id) {
-                    *flow = ControlFlow::Exit;
-                } else if app.open_id.as_ref() == Some(&id) {
-                    app.show(target);
-                }
-            }
+            Event::UserEvent(UserEvent::Menu(id)) if id == menus::QUIT => *flow = ControlFlow::Exit,
+            Event::UserEvent(UserEvent::Menu(id)) => app.menu(id.as_ref(), target),
             _ => {}
         }
     });
@@ -276,9 +282,13 @@ struct App {
     settings: Settings,
     proxy: EventLoopProxy<UserEvent>,
     window: Option<(Window, WebView)>,
+    /// Whether the window's page has said it is ready, and what waits to be posted to it until then.
+    page_ready: bool,
+    queued: Vec<Value>,
     tray: Option<TrayIcon>,
-    open_id: Option<MenuId>,
-    quit_id: Option<MenuId>,
+    tray_menu: Option<menus::Tray>,
+    /// The status line last shown in the tray, so it is set only when it changes.
+    status: String,
     /// Per-download bytes-and-time of the last tick, to work out the speed.
     speeds: HashMap<i64, (u64, Instant)>,
     /// The progress last written for the browser extension, so an unchanged list is not written again.
@@ -287,14 +297,9 @@ struct App {
 
 impl App {
     fn make_tray(&mut self) {
-        let open = MenuItem::new(format!("Mở {APP_NAME}"), true, None);
-        let quit = MenuItem::new("Thoát", true, None);
-        let menu = Menu::new();
-        if menu.append_items(&[&open, &quit]).is_err() {
-            return;
-        }
+        let menu = menus::tray(autostart::enabled());
         let icon = decode_png(TRAY_ICON).and_then(|(rgba, w, h)| tray_icon::Icon::from_rgba(rgba, w, h).ok());
-        let mut builder = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip(APP_NAME);
+        let mut builder = TrayIconBuilder::new().with_menu(Box::new(menu.menu.clone())).with_tooltip(APP_NAME);
         if let Some(icon) = icon {
             #[cfg(target_os = "macos")]
             {
@@ -309,8 +314,86 @@ impl App {
             Ok(tray) => self.tray = Some(tray),
             Err(e) => eprintln!("tray: {e}"),
         }
-        self.open_id = Some(open.id().clone());
-        self.quit_id = Some(quit.id().clone());
+        self.tray_menu = Some(menu);
+    }
+
+    /// An entry of the tray's menu or of the menu bar; Quit is handled by the event loop.
+    fn menu(&mut self, id: &str, target: &EventLoopWindowTarget<UserEvent>) {
+        match id {
+            menus::OPEN => self.show(target),
+            menus::ADD_COPIED => {
+                let proxy = self.proxy.clone();
+                thread::spawn(move || match clipboard_link() {
+                    Some(url) => add_probed(&proxy, vec![url]),
+                    None => {
+                        let _ = notify_rust::Notification::new().summary(APP_NAME).body("Chưa sao chép liên kết http hoặc https nào").show();
+                    }
+                });
+            }
+            menus::FOLDER => {
+                let _ = open_path(Path::new(&self.settings.download_dir));
+            }
+            menus::PAUSE_ALL | menus::RESUME_ALL => {
+                for row in store::list(&self.db).unwrap_or_default() {
+                    match row.status {
+                        engine::state::RUNNING | engine::state::QUEUED if id == menus::PAUSE_ALL => self.pause(row.id),
+                        engine::state::PAUSED if id == menus::RESUME_ALL => self.resume(row.id),
+                        _ => {}
+                    }
+                }
+                self.push_list();
+            }
+            menus::AUTOSTART => {
+                let on = self.tray_menu.as_ref().is_some_and(|t| t.autostart.is_checked());
+                if let Err(e) = autostart::set(on) {
+                    self.fail(e);
+                }
+                self.sync_autostart();
+            }
+            menus::SETTINGS => {
+                self.show(target);
+                self.post_ready(json!({ "event": "settings" }));
+            }
+            #[cfg(target_os = "macos")]
+            menus::HOME_PAGE => {
+                let _ = open_path(Path::new(&format!("https://github.com/{}", update::REPO)));
+            }
+            #[cfg(target_os = "macos")]
+            menus::REPORT => {
+                let _ = open_path(Path::new(&format!("https://github.com/{}/issues", update::REPO)));
+            }
+            _ => {}
+        }
+    }
+
+    /// The tray's switch and the page's follow whether Lanes starts with the computer.
+    fn sync_autostart(&self) {
+        let on = autostart::enabled();
+        if let Some(menu) = &self.tray_menu {
+            menu.autostart.set_checked(on);
+        }
+        self.post(&json!({ "event": "autostart", "data": on }));
+    }
+
+    /// Posts to the page once it has loaded: at once when it has, else after its `ready`.
+    fn post_ready(&mut self, message: Value) {
+        if self.page_ready {
+            self.post(&message);
+        } else {
+            self.queued.push(message);
+        }
+    }
+
+    fn pause(&self, id: i64) {
+        self.engine.pause(id);
+        let _ = store::set_status(&self.db, id, engine::state::PAUSED, "");
+    }
+
+    fn resume(&self, id: i64) {
+        if let Ok(Some(row)) = store::get(&self.db, id) {
+            let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
+            self.engine.start(id, row.source_list(), row.final_path(), row.header_pairs(), row.kind());
+        }
     }
 
     fn show(&mut self, target: &EventLoopWindowTarget<UserEvent>) {
@@ -320,6 +403,7 @@ impl App {
             window.set_focus();
             return;
         }
+        self.page_ready = false;
         match self.open_window(target) {
             Ok(pair) => self.window = Some(pair),
             Err(e) => eprintln!("window: {e}"),
@@ -386,13 +470,7 @@ impl App {
             return;
         }
         let proxy = self.proxy.clone();
-        thread::spawn(move || {
-            let primary = sources[0].clone();
-            let probe = engine::probe(&primary, &[]).ok();
-            let filename = probe.as_ref().map(|p| p.filename.clone()).unwrap_or_else(|| engine::filename_from(&primary, None));
-            let size = probe.and_then(|p| p.size);
-            let _ = proxy.send_event(UserEvent::Added(AddReq { sources, filename, size, headers: Vec::new(), kind: engine::Kind::File }));
-        });
+        thread::spawn(move || add_probed(&proxy, sources));
     }
 
     /// Records a probed download, starts it, and shows it in the list.
@@ -454,6 +532,7 @@ impl App {
         self.engine.release_idle();
         let items = self.items();
         browser::publish(&self.dir, &items, &mut self.published);
+        self.show_status(&items);
         if self.window.is_some() {
             self.post(&json!({ "event": "list", "data": items }));
             if self.settings.net_merge {
@@ -477,6 +556,23 @@ impl App {
         if let Ok(Some(row)) = store::get(&self.db, id) {
             let _ = notify_rust::Notification::new().summary(APP_NAME).body(&format!("Đã tải xong {}", row.filename)).show();
         }
+    }
+
+    /// What runs, in the tray's menu, its tooltip and beside its icon.
+    fn show_status(&mut self, items: &[Value]) {
+        let status = menus::Status::of(items);
+        let line = status.line();
+        if line == self.status {
+            return;
+        }
+        if let Some(menu) = &self.tray_menu {
+            menu.update(&status);
+        }
+        if let Some(tray) = &self.tray {
+            tray.set_title(status.title());
+            let _ = tray.set_tooltip(Some(format!("{APP_NAME}\n{line}")));
+        }
+        self.status = line;
     }
 
     fn push_list(&mut self) {
@@ -555,6 +651,10 @@ impl App {
                     "extension_dir": browser::extension_dir(&self.dir),
                 }}));
                 self.push_list();
+                self.page_ready = true;
+                for message in std::mem::take(&mut self.queued) {
+                    self.post(&message);
+                }
                 self.start_update_check();
             }
             "add" => {
@@ -567,18 +667,12 @@ impl App {
                 reply(self, Ok(Value::Null));
             }
             "pause" => {
-                let id = num("id");
-                self.engine.pause(id);
-                let _ = store::set_status(&self.db, id, engine::state::PAUSED, "");
+                self.pause(num("id"));
                 self.push_list();
                 reply(self, Ok(Value::Null));
             }
             "resume" => {
-                let id = num("id");
-                if let Ok(Some(row)) = store::get(&self.db, id) {
-                    let _ = store::set_status(&self.db, id, engine::state::RUNNING, "");
-                    self.engine.start(id, row.source_list(), row.final_path(), row.header_pairs(), row.kind());
-                }
+                self.resume(num("id"));
                 self.push_list();
                 reply(self, Ok(Value::Null));
             }
@@ -636,7 +730,12 @@ impl App {
                 reply(self, Ok(json!({ "on": self.settings.net_merge, "net": net })));
             }
             "choose_folder" => reply(self, choose_folder().map(|p| json!(p))),
-            "set_autostart" => reply(self, autostart::set(args["on"].as_bool().unwrap_or(false)).map(|()| json!(autostart::enabled()))),
+            "set_autostart" => {
+                reply(self, autostart::set(args["on"].as_bool().unwrap_or(false)).map(|()| json!(autostart::enabled())));
+                if let Some(menu) = &self.tray_menu {
+                    menu.autostart.set_checked(autostart::enabled());
+                }
+            }
             "check_update" => {
                 self.start_update_check();
                 reply(self, Ok(Value::Null));
@@ -689,6 +788,30 @@ impl App {
             let _ = proxy.send_event(UserEvent::Post(message));
         });
     }
+}
+
+/// Probes the first source for the name and size, off the event loop, then hands the download to it.
+fn add_probed(proxy: &EventLoopProxy<UserEvent>, sources: Vec<String>) {
+    let primary = sources[0].clone();
+    let probe = engine::probe(&primary, &[]).ok();
+    let filename = probe.as_ref().map(|p| p.filename.clone()).unwrap_or_else(|| engine::filename_from(&primary, None));
+    let size = probe.and_then(|p| p.size);
+    let _ = proxy.send_event(UserEvent::Added(AddReq { sources, filename, size, headers: Vec::new(), kind: engine::Kind::File }));
+}
+
+/// The first http or https link on the clipboard.
+fn clipboard_link() -> Option<String> {
+    let mut command = if cfg!(target_os = "macos") {
+        cmd("/usr/bin/pbpaste")
+    } else if cfg!(windows) {
+        let mut c = cmd("powershell");
+        c.args(["-NoProfile", "-Command", "Get-Clipboard"]);
+        c
+    } else {
+        return None;
+    };
+    let out = command.output().ok()?;
+    String::from_utf8_lossy(&out.stdout).split_whitespace().find(|w| w.starts_with("http://") || w.starts_with("https://")).map(str::to_owned)
 }
 
 /// The links of net-merge as the page shows them; the addresses stay here.

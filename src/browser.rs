@@ -231,13 +231,13 @@ fn reply_to(dir: &Path, message: &Value) -> Value {
             None => invalid(),
         },
         Some("page") => match Job::from_message(message) {
-            Some(job) => match crate::ytdlp::formats(&job.url) {
+            Some(job) => match formats(&job) {
                 Ok(formats) => {
                     let mut reply = json!(formats);
                     reply["ok"] = json!(true);
                     reply
                 }
-                Err(error) => json!({ "ok": false, "error": error, "missing": crate::ytdlp::program("yt-dlp").is_none() }),
+                Err(error) => json!({ "ok": false, "error": error }),
             },
             None => invalid(),
         },
@@ -251,6 +251,18 @@ fn reply_to(dir: &Path, message: &Value) -> Value {
             },
             None => invalid(),
         },
+    }
+}
+
+/// The formats of a video page: as Lanes reads it itself (src/extract), or else through yt-dlp when the user has it.
+/// yt-dlp's failure is said unless it does not know the site, in which case Lanes' own is.
+fn formats(job: &Job) -> Result<crate::ytdlp::Formats, String> {
+    let headers = job.headers();
+    match crate::extract::formats(&job.url, &headers) {
+        Err(own) if crate::ytdlp::program("yt-dlp").is_some() => {
+            crate::ytdlp::formats(&job.url, &headers).map_err(|e| if e.to_ascii_lowercase().contains("unsupported url") { own } else { e })
+        }
+        result => result,
     }
 }
 
