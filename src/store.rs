@@ -21,6 +21,8 @@ pub struct Row {
     pub headers: String,
     /// net-merge mirror URLs (primary first), stored as a JSON array; empty for an ordinary one-source download.
     pub sources: String,
+    /// An HLS video from the browser's video button: `url` is its playlist.
+    pub hls: bool,
 }
 
 impl Row {
@@ -57,17 +59,23 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
             added_at  INTEGER NOT NULL,
             error     TEXT NOT NULL DEFAULT '',
             headers   TEXT NOT NULL DEFAULT '[]',
-            sources   TEXT NOT NULL DEFAULT '[]'
+            sources   TEXT NOT NULL DEFAULT '[]',
+            hls       INTEGER NOT NULL DEFAULT 0
         );",
     )?;
+    // A list from before 0.3 has no hls column yet.
+    if db.prepare("SELECT hls FROM downloads LIMIT 0").is_err() {
+        db.execute("ALTER TABLE downloads ADD COLUMN hls INTEGER NOT NULL DEFAULT 0", [])?;
+    }
     Ok(db)
 }
 
 /// Records a new download and gives its id. `headers` and `sources` are JSON arrays, `[]` when empty.
-pub fn add(db: &Connection, url: &str, filename: &str, dir: &str, headers: &str, sources: &str, now: i64) -> rusqlite::Result<i64> {
+#[allow(clippy::too_many_arguments)]
+pub fn add(db: &Connection, url: &str, filename: &str, dir: &str, headers: &str, sources: &str, hls: bool, now: i64) -> rusqlite::Result<i64> {
     db.execute(
-        "INSERT INTO downloads (url, filename, dir, size, status, added_at, headers, sources) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7)",
-        params![url, filename, dir, state::QUEUED, now, headers, sources],
+        "INSERT INTO downloads (url, filename, dir, size, status, added_at, headers, sources, hls) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7, ?8)",
+        params![url, filename, dir, state::QUEUED, now, headers, sources, hls],
     )?;
     Ok(db.last_insert_rowid())
 }
@@ -90,14 +98,14 @@ pub fn remove(db: &Connection, id: i64) -> rusqlite::Result<()> {
 }
 
 pub fn get(db: &Connection, id: i64) -> rusqlite::Result<Option<Row>> {
-    db.query_row("SELECT id, url, filename, dir, size, status, added_at, error, headers, sources FROM downloads WHERE id = ?1", params![id], row)
+    db.query_row("SELECT id, url, filename, dir, size, status, added_at, error, headers, sources, hls FROM downloads WHERE id = ?1", params![id], row)
         .optional()
 }
 
 /// Every download, newest first.
 pub fn list(db: &Connection) -> rusqlite::Result<Vec<Row>> {
     let mut stmt =
-        db.prepare("SELECT id, url, filename, dir, size, status, added_at, error, headers, sources FROM downloads ORDER BY added_at DESC, id DESC")?;
+        db.prepare("SELECT id, url, filename, dir, size, status, added_at, error, headers, sources, hls FROM downloads ORDER BY added_at DESC, id DESC")?;
     let rows = stmt.query_map([], row)?.collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -114,6 +122,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Row> {
         error: r.get(7)?,
         headers: r.get(8)?,
         sources: r.get(9)?,
+        hls: r.get(10)?,
     })
 }
 
@@ -124,7 +133,7 @@ mod tests {
     #[test]
     fn a_download_is_added_listed_and_removed() {
         let db = open(Path::new(":memory:")).unwrap();
-        let id = add(&db, "https://x.com/a.zip", "a.zip", "/tmp", "[]", "[]", 100).unwrap();
+        let id = add(&db, "https://x.com/a.zip", "a.zip", "/tmp", "[]", "[]", false, 100).unwrap();
         set_size(&db, id, 4096).unwrap();
         set_status(&db, id, state::DONE, "").unwrap();
         let rows = list(&db).unwrap();
@@ -141,17 +150,38 @@ mod tests {
     #[test]
     fn a_failure_keeps_its_reason() {
         let db = open(Path::new(":memory:")).unwrap();
-        let id = add(&db, "https://x.com/a", "a", "/tmp", "[]", "[]", 1).unwrap();
+        let id = add(&db, "https://x.com/a", "a", "/tmp", "[]", "[]", false, 1).unwrap();
         set_status(&db, id, state::ERROR, "Máy chủ trả mã 404").unwrap();
         assert_eq!(get(&db, id).unwrap().unwrap().error, "Máy chủ trả mã 404");
     }
 
     #[test]
+    fn a_list_from_before_hls_gains_the_column() {
+        let path = std::env::temp_dir().join(format!("lanes-store-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE downloads (id INTEGER PRIMARY KEY, url TEXT NOT NULL, filename TEXT NOT NULL, dir TEXT NOT NULL,
+                 size INTEGER, status INTEGER NOT NULL, added_at INTEGER NOT NULL, error TEXT NOT NULL DEFAULT '',
+                 headers TEXT NOT NULL DEFAULT '[]', sources TEXT NOT NULL DEFAULT '[]');
+                 INSERT INTO downloads (url, filename, dir, status, added_at) VALUES ('https://x.com/a', 'a', '/tmp', 3, 1);",
+            )
+            .unwrap();
+        let db = open(&path).unwrap();
+        assert!(!list(&db).unwrap()[0].hls);
+        let id = add(&db, "https://x.com/v.m3u8", "v.ts", "/tmp", "[]", "[]", true, 2).unwrap();
+        assert!(get(&db, id).unwrap().unwrap().hls);
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn source_list_falls_back_to_the_primary_url() {
         let db = open(Path::new(":memory:")).unwrap();
-        let one = add(&db, "https://a/f", "f", "/tmp", "[]", "[]", 1).unwrap();
+        let one = add(&db, "https://a/f", "f", "/tmp", "[]", "[]", false, 1).unwrap();
         assert_eq!(get(&db, one).unwrap().unwrap().source_list(), vec!["https://a/f".to_string()]);
-        let many = add(&db, "https://a/f", "f", "/tmp", "[]", r#"["https://a/f","https://b/f"]"#, 2).unwrap();
+        let many = add(&db, "https://a/f", "f", "/tmp", "[]", r#"["https://a/f","https://b/f"]"#, false, 2).unwrap();
         assert_eq!(get(&db, many).unwrap().unwrap().source_list(), vec!["https://a/f".to_string(), "https://b/f".to_string()]);
     }
 }

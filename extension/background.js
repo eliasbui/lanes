@@ -1,7 +1,9 @@
 // Lanes for Chrome, Edge, Brave and Coc Coc. It takes a download the browser started and hands it to the Lanes app
 // through native messaging, with the page's Referer, Cookie and User-Agent so a site that checks them serves the
-// file to Lanes as it did to the browser (src/browser.rs). A right-click menu sends a link on demand; auto-capture,
-// on by default, sends ordinary downloads. Nothing leaves the machine: the message goes to the local app only.
+// file to Lanes as it did to the browser (src/browser.rs). A right-click menu sends a link or a video on demand;
+// auto-capture, on by default, sends ordinary downloads. It also notes the video files and HLS playlists each tab
+// loads, which the video button (content.js) offers by resolution. Nothing leaves the machine: the message goes to
+// the local app only.
 "use strict";
 
 const HOST = "com.eliasbui.lanes";
@@ -9,9 +11,14 @@ const MENU = "lanes-download";
 
 // File types the browser is better left to handle, and pages that are not real downloads.
 const SKIP = /\.(html?|xml|json|css|js|txt)(\?|$)/i;
+// What the video button can offer: a whole video file the page played, or an HLS playlist.
+const VIDEO_FILE = /\.(mp4|m4v|webm|mov|mkv|flv|avi|3gp|ogv)$/i;
+const HLS_FILE = /\.m3u8$/i;
+// The most media remembered per tab; the oldest goes first.
+const MAX_MEDIA = 40;
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({ id: MENU, title: "Tải bằng Lanes", contexts: ["link"] });
+  chrome.contextMenus.create({ id: MENU, title: "Tải bằng Lanes", contexts: ["link", "video", "audio"] });
 });
 
 async function autoCapture() {
@@ -50,19 +57,20 @@ function note(ok, text) {
   });
 }
 
-// Sends one download to the app with the headers the page used.
-async function toLanes(url, filename, referrer) {
-  const message = { url, filename: filename || "", referrer: referrer || "", cookie: await cookieHeader(url), userAgent: navigator.userAgent };
+// Sends one download to the app with the headers the page used. `kind` is "hls" for an HLS playlist.
+async function toLanes(url, filename, referrer, kind = "") {
+  const message = { url, filename: filename || "", referrer: referrer || "", cookie: await cookieHeader(url), userAgent: navigator.userAgent, kind };
   const reply = await send(message);
   const name = (filename || url).split("/").pop().slice(0, 40);
   note(!!reply.ok, reply.ok ? `Đang tải "${name}"` : reply.error || "Lanes không nhận được liên kết.");
-  return reply.ok;
+  return reply;
 }
 
-// The right-click menu on a link: always send it, whatever the auto-capture setting.
+// The right-click menu on a link or a video: always send it, whatever the auto-capture setting.
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === MENU && info.linkUrl) {
-    toLanes(info.linkUrl, "", info.pageUrl || tab?.url || "");
+  const url = info.linkUrl || info.srcUrl || "";
+  if (info.menuItemId === MENU && /^https?:\/\//i.test(url)) {
+    toLanes(url, "", info.pageUrl || tab?.url || "");
   }
 });
 
@@ -77,10 +85,174 @@ chrome.downloads.onCreated.addListener(async (item) => {
   if (item.state && item.state !== "in_progress") return;
   const filename = (item.filename || "").split(/[\\/]/).pop() || "";
   const sent = await toLanes(url, filename, item.referrer || "");
-  if (sent) {
+  if (sent.ok) {
     chrome.downloads.cancel(item.id, () => {
       void chrome.runtime.lastError;
       chrome.downloads.erase({ id: item.id }, () => void chrome.runtime.lastError);
     });
+  }
+});
+
+// The media each tab loaded, as { url, kind: "file" | "hls", size, frameId }. Kept in session storage too, since the
+// service worker sleeps between events and would forget it.
+const media = new Map();
+const keyOf = (tabId) => `media:${tabId}`;
+
+function mediaOf(tabId) {
+  if (!media.has(tabId)) {
+    const key = keyOf(tabId);
+    media.set(tabId, chrome.storage.session.get(key).then((got) => got[key] || [], () => []));
+  }
+  return media.get(tabId);
+}
+
+async function remember(tabId, item) {
+  const list = await mediaOf(tabId);
+  const known = list.find((m) => m.url === item.url);
+  if (known) {
+    known.size = item.size || known.size;
+  } else {
+    list.push(item);
+    if (list.length > MAX_MEDIA) list.shift();
+  }
+  chrome.storage.session.set({ [keyOf(tabId)]: list }).catch(() => {});
+}
+
+function forget(tabId) {
+  media.delete(tabId);
+  chrome.storage.session.remove(keyOf(tabId)).catch(() => {});
+}
+
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.status === "loading") forget(tabId);
+});
+chrome.tabs.onRemoved.addListener(forget);
+
+function header(details, name) {
+  return details.responseHeaders?.find((h) => h.name.toLowerCase() === name)?.value || "";
+}
+
+// The whole file's size: the total of a range answer, or the length of a whole one.
+function sizeOf(details) {
+  const total = /\/(\d+)\s*$/.exec(header(details, "content-range"));
+  if (total) return Number(total[1]);
+  return details.statusCode === 200 ? Number(header(details, "content-length")) || 0 : 0;
+}
+
+// A whole video file is what a <video> element itself requests. The pieces a streaming player (YouTube, DASH, the
+// segments of HLS) fetches go through XHR or fetch instead, so they never count as files here.
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    if (details.tabId < 0 || (details.statusCode !== 200 && details.statusCode !== 206)) return;
+    const path = details.url.split(/[?#]/)[0];
+    const type = header(details, "content-type").toLowerCase();
+    let kind = "";
+    if (HLS_FILE.test(path) || type.includes("mpegurl")) kind = "hls";
+    else if (details.type === "media" && (VIDEO_FILE.test(path) || type.startsWith("video/"))) kind = "file";
+    if (!kind) return;
+    remember(details.tabId, { url: details.url, kind, size: kind === "file" ? sizeOf(details) : 0, frameId: details.frameId });
+  },
+  { urls: ["http://*/*", "https://*/*"], types: ["media", "xmlhttprequest", "other"] },
+  ["responseHeaders"]
+);
+
+function human(n) {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return (i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)) + " " + units[i];
+}
+
+// A file name from the page title, the resolution and the type: "Page title 720p.mp4".
+function nameFor(title, height, ext) {
+  const base = (title || "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "video";
+  return `${base}${height ? ` ${height}p` : ""}.${ext}`;
+}
+
+function fileItem(m, title) {
+  const ext = (VIDEO_FILE.exec(m.url.split(/[?#]/)[0])?.[1] || "mp4").toLowerCase();
+  const height = m.height || Number(/(?:^|\D)(\d{3,4})p(?![a-z])/i.exec(m.url)?.[1]) || 0;
+  return {
+    kind: "file",
+    url: m.url,
+    height,
+    size: m.size || 0,
+    label: height ? `${height}p` : ext.toUpperCase(),
+    detail: [height ? ext.toUpperCase() : "", m.size ? human(m.size) : ""].filter(Boolean).join(" · "),
+    filename: nameFor(title, height, ext),
+  };
+}
+
+function hlsItem(v, reply, title) {
+  const size = v.bandwidth && reply.duration ? (v.bandwidth * reply.duration) / 8 : 0;
+  return {
+    kind: "hls",
+    url: v.url,
+    height: v.height || 0,
+    size,
+    label: v.height ? `${v.height}p` : "HLS",
+    detail: [v.height ? "HLS" : "", size ? `khoảng ${human(size)}` : "", v.separate_audio ? "không kèm tiếng" : ""].filter(Boolean).join(" · "),
+    filename: nameFor(title, v.height, reply.ext),
+  };
+}
+
+// What the video button offers for one video. A video playing a file (`direct`) offers its own sources only. A
+// streaming one offers the media its frame loaded (or, when that frame loaded none, the whole tab's), less the files
+// `others` videos play. Each HLS playlist is opened up into its resolutions by the app.
+async function streams(sender, { sources = [], direct = false, others = [], title = "" }) {
+  const all = sender.tab ? await mediaOf(sender.tab.id) : [];
+  let found = [];
+  if (!direct) {
+    found = all.filter((m) => m.frameId === sender.frameId);
+    if (!found.length) found = all;
+    found = found.filter((m) => !others.includes(m.url)).map((m) => ({ ...m }));
+  }
+  for (const s of sources) {
+    const known = found.find((m) => m.url === s.url);
+    const seen = all.find((m) => m.url === s.url);
+    if (known) known.height = known.height || s.height;
+    else found.push({ url: s.url, kind: HLS_FILE.test(s.url.split(/[?#]/)[0]) ? "hls" : "file", size: seen?.size || 0, height: s.height });
+  }
+
+  const referrer = sender.url || sender.tab?.url || "";
+  const items = found.filter((m) => m.kind === "file").map((m) => fileItem(m, title));
+  const notes = [];
+  const playlists = found.filter((m) => m.kind === "hls");
+  const replies = await Promise.all(
+    playlists.map(async (m) => ({
+      m,
+      reply: await send({ cmd: "variants", url: m.url, referrer, cookie: await cookieHeader(m.url), userAgent: navigator.userAgent }),
+    }))
+  );
+  // A playlist a master names (one of its resolutions, or its sound) is offered through the master only.
+  const named = new Set();
+  for (const { m, reply } of replies) {
+    if (reply.ok && reply.variants.some((v) => v.url !== m.url)) {
+      reply.variants.forEach((v) => named.add(v.url));
+      reply.renditions.forEach((url) => named.add(url));
+    }
+  }
+  for (const { m, reply } of replies) {
+    if (!reply.ok) notes.push(reply.error);
+    else if (!named.has(m.url)) items.push(...reply.variants.map((v) => hlsItem(v, reply, title)));
+  }
+
+  const unique = items.filter((item, i) => items.findIndex((other) => other.url === item.url) === i);
+  unique.sort((a, b) => b.height - a.height || b.size - a.size);
+  return { items: unique, notes: [...new Set(notes)] };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message?.type === "streams") {
+    streams(sender, message).then(reply, () => reply({ items: [], notes: ["Không đọc được danh sách video."] }));
+    return true;
+  }
+  if (message?.type === "download") {
+    const { url = "", filename = "", kind = "" } = message.item || {};
+    toLanes(url, filename, sender.url || sender.tab?.url || "", kind === "hls" ? "hls" : "").then(reply);
+    return true;
   }
 });

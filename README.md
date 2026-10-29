@@ -24,7 +24,7 @@
 Lanes is a download manager written in Rust. It opens many connections to a file at once, writes each range straight
 into its place, and keeps a sidecar so a stopped download resumes instead of starting over. A browser extension hands
 downloads to the app with the page's own headers, so a site that served the file to the browser serves it to Lanes
-too. The window is a single web page over a glass background; every rule behind it is tested Rust. It runs in the menu
+too, and puts a download button on the videos you watch, with a choice of resolution. The window is a single web page over a glass background; every rule behind it is tested Rust. It runs in the menu
 bar, and is in English and Vietnamese.
 
 ## Features
@@ -36,7 +36,13 @@ bar, and is in English and Vietnamese.
   rather than mixing old and new bytes.
 - **Browser capture.** The extension takes a download the browser started and sends it to Lanes with the Referer,
   Cookie and User-Agent of the page, which is what gets most "403 Forbidden" downloads through. Works in Chrome, Edge,
-  Brave and Cốc Cốc; a right-click "Download with Lanes" is there too.
+  Brave and Cốc Cốc; a right-click "Download with Lanes" is there too. If Lanes is not running, the extension starts
+  it in the menu bar so the download begins at once.
+- **Video button.** Hover a video and a "Tải video" button appears in its corner; it lists what Lanes can download
+  for that video by resolution (1080p, 720p, ...) with the size or an estimate. Whole video files go through the
+  normal multi-connection engine; HLS streams (`.m3u8`) are fetched segment by segment in parallel, AES-128 included,
+  resumable, and joined into one `.ts` or `.mp4`. Not supported yet: YouTube and other DASH streams, live streams,
+  joining a separate audio track, and anything with DRM, which Lanes never touches.
 - **net-merge (beta).** Paste several mirror URLs of one file and Lanes spreads the segments across them, merging
   their bandwidth. A mirror that disagrees on the size or allows no ranges is dropped, and each segment moves to the
   next mirror when one fails. (Lanes' net-merge is multi-source merging; it is unrelated to the NetMerge
@@ -74,9 +80,13 @@ publishes, and adds a Start-menu shortcut. Run the same line again to update; re
 
 ### Browser extension
 
-Open Lanes once so it registers the native host with your browsers. Then load `extension/` as an unpacked extension
-from `chrome://extensions` (or the Edge, Brave, Cốc Cốc equivalent) with Developer mode on. Its id is fixed by the
-key in `extension/manifest.json`, so Lanes recognises it wherever you load it from.
+The app carries the extension and writes it to `~/Library/Application Support/Lanes/extension` (macOS) or
+`%APPDATA%\Lanes\extension` (Windows) at every start; Settings, Browser extension shows the folder. Open
+`chrome://extensions` (or the Edge, Brave, Cốc Cốc equivalent), turn on Developer mode and drag that folder onto the
+page, or use "Load unpacked". Since the app refreshes the folder when it updates, the browser picks up the matching
+extension at its next start. Its id is fixed by the key in `extension/manifest.json`, so Lanes recognises it
+wherever you load it from. The popup shows whether the extension reaches the app, and turns capture and the video
+button on and off.
 
 ## Build and run
 
@@ -92,8 +102,11 @@ Rust 1.85 or later.
 
 - `src/engine.rs` — the download engine: probing for size and range support, planning equal segments, one connection
   per segment with positioned writes, the resume sidecar, and retries.
+- `src/hls.rs` — HLS playlists: resolutions of a master, segments, keys and byte ranges of a media playlist, and
+  AES-128 decryption.
 - `src/store.rs` — the list of downloads in SQLite.
-- `src/browser.rs` — the native-messaging host and the inbox the extension drops jobs into.
+- `src/browser.rs` — the native-messaging host, the inbox the extension drops jobs into, and the extension the app
+  carries.
 - `src/update.rs` — the in-app update: read the latest release, verify its SHA-256, swap the app in place, restart.
 - `src/autostart.rs` — launch at login (a LaunchAgent on macOS, the Run key on Windows).
 - `src/main.rs` — the window, the tray and the glue between the page and the engine.

@@ -23,7 +23,8 @@
 
 Lanes là trình quản lý tải xuống viết bằng Rust. Nó mở nhiều kết nối tới một tệp cùng lúc, ghi thẳng mỗi đoạn vào đúng
 vị trí trong tệp đích, và lưu một tệp đi kèm để tải dở tiếp tục được thay vì tải lại từ đầu. Tiện ích trình duyệt chuyển
-download sang app kèm header của trang, nên máy chủ đã phục vụ tệp cho trình duyệt cũng phục vụ cho Lanes. Cửa sổ là một
+download sang app kèm header của trang, nên máy chủ đã phục vụ tệp cho trình duyệt cũng phục vụ cho Lanes, và gắn nút
+tải lên các video bạn xem, có chọn độ phân giải. Cửa sổ là một
 trang web trên nền kính; mọi quy tắc phía sau là Rust có kiểm thử. App chạy trong thanh trạng thái, có tiếng Anh và
 tiếng Việt.
 
@@ -35,7 +36,13 @@ tiếng Việt.
   chỗ đã dừng. App hỏi máy chủ đúng tệp cũ theo ETag, nên tệp đã đổi trên máy chủ sẽ tải lại thay vì trộn lẫn.
 - **Bắt download từ trình duyệt.** Tiện ích nhận download trình duyệt vừa tạo rồi gửi sang Lanes kèm Referer, Cookie,
   User-Agent của trang, đây là thứ giúp phần lớn liên kết bị lỗi "403 Forbidden" tải được. Dùng với Chrome, Edge,
-  Brave và Cốc Cốc; có cả menu chuột phải "Tải bằng Lanes".
+  Brave và Cốc Cốc; có cả menu chuột phải "Tải bằng Lanes". Nếu Lanes chưa chạy, tiện ích tự mở app trong thanh
+  trạng thái để download bắt đầu ngay.
+- **Nút tải video.** Rê chuột lên một video, nút "Tải video" hiện ở góc; bấm vào sẽ thấy các bản Lanes tải được cho
+  video đó theo độ phân giải (1080p, 720p, ...) kèm dung lượng hoặc dung lượng ước tính. Tệp video nguyên vẹn đi qua
+  engine nhiều kết nối như thường; luồng HLS (`.m3u8`) được tải song song từng đoạn, kể cả mã hóa AES-128, tiếp tục
+  được khi dừng, rồi ghép thành một tệp `.ts` hoặc `.mp4`. Chưa hỗ trợ: YouTube và các luồng DASH khác, phát trực
+  tiếp, ghép tiếng nằm ở luồng riêng, và video có DRM (Lanes không bao giờ động tới).
 - **net-merge (beta).** Dán nhiều liên kết mirror của cùng một file, Lanes chia các đoạn cho từng nguồn và gộp băng
   thông. Nguồn nào khác kích thước hoặc không cho tải theo đoạn sẽ bị bỏ; mỗi đoạn tự chuyển sang nguồn khác khi một
   nguồn lỗi. (net-merge của Lanes là gộp nhiều nguồn tải, không liên quan tới các công cụ NetMerge gộp đường mạng.)
@@ -71,9 +78,13 @@ công bố, rồi thêm lối tắt vào menu Start. Chạy lại lệnh để c
 
 ### Tiện ích trình duyệt
 
-Mở Lanes một lần để app tự đăng ký native host với trình duyệt. Sau đó mở `chrome://extensions` (hoặc trang tương ứng
-của Edge, Brave, Cốc Cốc), bật Chế độ nhà phát triển, bấm "Tải tiện ích đã giải nén" và chọn thư mục `extension/`. Mã
-tiện ích cố định nhờ khóa trong `extension/manifest.json`, nên Lanes nhận ra nó dù bạn tải từ đâu.
+App mang sẵn tiện ích và ghi nó ra `~/Library/Application Support/Lanes/extension` (macOS) hoặc
+`%APPDATA%\Lanes\extension` (Windows) mỗi lần mở; mục Cài đặt, Tiện ích trình duyệt cho biết thư mục này. Mở
+`chrome://extensions` (hoặc trang tương ứng của Edge, Brave, Cốc Cốc), bật Chế độ nhà phát triển rồi kéo thư mục đó vào
+trang, hoặc bấm "Tải tiện ích đã giải nén" và chọn nó. App làm mới thư mục mỗi khi cập nhật, nên trình duyệt nhận bản
+tiện ích khớp với app ở lần mở sau. Mã tiện ích cố định nhờ khóa trong `extension/manifest.json`, nên Lanes nhận ra nó
+dù bạn tải từ đâu. Cửa sổ nhỏ của tiện ích cho biết đã kết nối được với app chưa, và bật tắt việc tự nhận download cùng
+nút tải video.
 
 ## Xây dựng và chạy
 
@@ -89,8 +100,10 @@ Rust 1.85 trở lên.
 
 - `src/engine.rs` — engine tải: thăm dò kích thước và khả năng tải theo đoạn, chia đoạn bằng nhau, mỗi kết nối một
   đoạn ghi theo vị trí, tệp đi kèm để resume, và thử lại khi lỗi.
+- `src/hls.rs` — danh sách HLS: các độ phân giải của bản chính, các đoạn, khóa và đoạn byte của một bản, và giải mã
+  AES-128.
 - `src/store.rs` — danh sách tải trong SQLite.
-- `src/browser.rs` — native host và hộp thư mà tiện ích thả việc vào.
+- `src/browser.rs` — native host, hộp thư mà tiện ích thả việc vào, và tiện ích app mang theo.
 - `src/update.rs` — tự cập nhật: đọc bản mới nhất, kiểm tra SHA-256, thay app tại chỗ, khởi động lại.
 - `src/autostart.rs` — mở cùng máy tính (LaunchAgent trên macOS, khóa Run trên Windows).
 - `src/main.rs` — cửa sổ, tray và phần nối giữa trang web với engine.

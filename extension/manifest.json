@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Lanes Integration",
-  "version": "0.1.0",
-  "description": "Tải liên kết trong trình duyệt bằng Lanes: nhiều kết nối, tạm dừng và tiếp tục.",
+  "version": "0.3.0",
+  "description": "Tải liên kết và video trong trình duyệt bằng Lanes: nhiều kết nối, chọn độ phân giải, tạm dừng và tiếp tục.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw0zGmUiKga4/SPBhtbTu9MSbhmGbV8jY0LlLr5xAwRoreqSnjFet75K2BtJaj5kEbP8br9JbgNWmwmCY1+hYCONtI1AS3RqmL72N983erErjqpvyXDH285ZfhBVNhzZhGhKO/88YTJLlQ55y+Y8cVLkatoXNsOZkXWj9XPbxyngrO/LB7NAcBjTs6QfEi6NGp+tqyg/a/852UMA6u5NgJ4Z0GFdyr5VWKcVveRXu3PyphQvbeEStShv9QuoadzCF6rYXuvtj0d559/LHTIgAcxrL7g5g9BrtnW11ez2xbVgopeCdOgJaVl+cftwPCyyPNeRxuVk+phVgF50+fOzqMwIDAQAB",
   "minimum_chrome_version": "109",
-  "permissions": ["downloads", "contextMenus", "cookies", "nativeMessaging", "storage", "notifications"],
+  "permissions": ["downloads", "contextMenus", "cookies", "nativeMessaging", "storage", "notifications", "webRequest"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "all_frames": true, "run_at": "document_idle" }],
   "action": { "default_title": "Lanes", "default_popup": "popup.html" },
   "icons": { "16": "icon-128.png", "48": "icon-128.png", "128": "icon-128.png" }
 }

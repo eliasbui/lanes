@@ -1,15 +1,20 @@
 //! The browser extension in extension/: it takes over a download the browser started and sends it here, through
 //! native messaging, with the address, the name, and the headers the page used (Referer, Cookie, User-Agent) so a
-//! site that checks them serves the file to Lanes as it did to the browser. The browser starts the app itself as the
-//! host; that copy opens no window, only drops the job in an inbox in the data folder and answers. The running app,
-//! now or at its next start, takes the jobs and hands them to the engine.
+//! site that checks them serves the file to Lanes as it did to the browser. Its video button asks here for the
+//! resolutions of an HLS video and sends the one picked the same way. The browser starts the app itself as the host;
+//! that copy opens no window, only answers, or drops the job in an inbox in the data folder and starts the app in the
+//! tray when it is not running. The running app takes the jobs and hands them to the engine.
+//!
+//! The extension's files are carried in the app and written to the data folder at every start, so the copy the
+//! browser loads always matches the app.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 
 /// The name the extension asks the browser for.
@@ -23,6 +28,15 @@ const MAX_MESSAGE: u32 = 64 * 1024;
 const INBOX: &str = "inbox.jsonl";
 const MAX_URL: usize = 4000;
 const MAX_HEADER: usize = 8000;
+/// The extension, as the browser loads it from `<data folder>/extension`.
+const EXTENSION: [(&str, &[u8]); 6] = [
+    ("manifest.json", include_bytes!("../extension/manifest.json")),
+    ("background.js", include_bytes!("../extension/background.js")),
+    ("content.js", include_bytes!("../extension/content.js")),
+    ("popup.html", include_bytes!("../extension/popup.html")),
+    ("popup.js", include_bytes!("../extension/popup.js")),
+    ("icon-128.png", include_bytes!("../extension/icon-128.png")),
+];
 
 /// The browsers by the folder they keep their data in, where a NativeMessagingHosts folder tells them of hosts.
 #[cfg(target_os = "macos")]
@@ -42,6 +56,8 @@ pub struct Job {
     pub referrer: String,
     pub cookie: String,
     pub user_agent: String,
+    /// The URL is an HLS playlist the video button picked.
+    pub hls: bool,
 }
 
 impl Job {
@@ -58,6 +74,7 @@ impl Job {
             referrer: field("referrer", MAX_URL),
             cookie: field("cookie", MAX_HEADER),
             user_agent: field("userAgent", 1000),
+            hls: message["kind"] == "hls",
         })
     }
 
@@ -98,21 +115,99 @@ pub fn write_message(output: &mut impl Write, message: &Value) -> io::Result<()>
     output.flush()
 }
 
-/// The app as the browser's host: one message in, its job into the inbox, one answer out.
+/// The app as the browser's host: one message in, one answer out.
 pub fn host(dir: &Path) {
     let answer = match read_message(&mut io::stdin().lock()) {
-        Ok(message) => match Job::from_message(&message) {
-            Some(job) => match push(dir, &job) {
-                Ok(()) => json!({ "ok": true }),
-                Err(e) => json!({ "ok": false, "error": format!("Lanes không nhận được liên kết này ({e})") }),
-            },
-            None => json!({ "ok": false, "error": "Liên kết không hợp lệ" }),
-        },
+        Ok(message) => answer(dir, &message),
         Err(e) => json!({ "ok": false, "error": format!("Lanes không đọc được yêu cầu, hãy cập nhật tiện ích ({e})") }),
     };
     if let Err(e) = write_message(&mut io::stdout().lock(), &answer) {
         eprintln!("native messaging: {e}");
     }
+}
+
+/// The answer to one message of the extension: `ping` for the popup, `variants` for the resolutions of an HLS video,
+/// and anything else is a download, put in the inbox.
+fn answer(dir: &Path, message: &Value) -> Value {
+    let invalid = || json!({ "ok": false, "error": "Liên kết không hợp lệ" });
+    match message["cmd"].as_str() {
+        Some("ping") => json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }),
+        Some("variants") => match Job::from_message(message) {
+            Some(job) => match crate::hls::choices(&job.url, &job.headers()) {
+                Ok(choices) => {
+                    let mut reply = json!(choices);
+                    reply["ok"] = json!(true);
+                    reply
+                }
+                Err(error) => json!({ "ok": false, "error": error }),
+            },
+            None => invalid(),
+        },
+        _ => match Job::from_message(message) {
+            Some(job) => match push(dir, &job) {
+                Ok(()) => {
+                    wake(dir);
+                    json!({ "ok": true })
+                }
+                Err(e) => json!({ "ok": false, "error": format!("Lanes không nhận được liên kết này ({e})") }),
+            },
+            None => invalid(),
+        },
+    }
+}
+
+/// Starts the app in the tray when it is not running, so a download sent from the browser begins at once instead of
+/// waiting in the inbox for the next start. A bundle is started through `open`, so it is not a child of the browser.
+fn wake(dir: &Path) {
+    // The running app holds this lock (main.rs); being able to take it means no app is running.
+    let running = File::create(dir.join("app.lock")).map_or(true, |f| f.try_lock().is_err());
+    if running {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let background = crate::autostart::BACKGROUND;
+    let bundle = exe.ancestors().nth(3).filter(|p| cfg!(target_os = "macos") && p.extension().is_some_and(|e| e == "app"));
+    let mut command = match bundle {
+        Some(app) => {
+            let mut c = Command::new("/usr/bin/open");
+            c.args(["-g", "-a"]).arg(app).args(["--args", background]);
+            c
+        }
+        None => {
+            let mut c = Command::new(&exe);
+            c.arg(background);
+            c
+        }
+    };
+    // The browser's pipes are this host's stdio; the app must not hold them.
+    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, and out of the browser's job when it allows that.
+        command.creation_flags(0x8 | 0x200 | 0x0100_0000);
+        if command.spawn().is_ok() {
+            return;
+        }
+        command.creation_flags(0x8 | 0x200);
+    }
+    if let Err(e) = command.spawn() {
+        eprintln!("cannot start the app: {e}");
+    }
+}
+
+/// Where the extension is kept for the browser to load, in the data folder.
+pub fn extension_dir(dir: &Path) -> PathBuf {
+    dir.join("extension")
+}
+
+/// Writes this version's extension to the data folder, file by file only where it changed.
+pub fn install_extension(dir: &Path) -> io::Result<()> {
+    let folder = extension_dir(dir);
+    for (name, bytes) in EXTENSION {
+        write_if_changed(&folder.join(name), bytes)?;
+    }
+    Ok(())
 }
 
 /// Adds a job at the end of the inbox, under a lock so the app never takes half of it.
@@ -152,8 +247,9 @@ fn manifest(exe: &Path) -> String {
     serde_json::to_string_pretty(&manifest).unwrap_or_default() + "\n"
 }
 
-fn write_if_changed(path: &Path, text: &str) -> io::Result<bool> {
-    if fs::read_to_string(path).is_ok_and(|old| old == text) {
+fn write_if_changed(path: &Path, text: impl AsRef<[u8]>) -> io::Result<bool> {
+    let text = text.as_ref();
+    if fs::read(path).is_ok_and(|old| old == text) {
         return Ok(false);
     }
     if let Some(folder) = path.parent() {
@@ -242,6 +338,8 @@ mod tests {
             ("Cookie".into(), "a=1".into()),
             ("User-Agent".into(), "Mozilla/5.0".into()),
         ]);
+        assert!(!job.hls);
+        assert!(Job::from_message(&json!({ "url": "https://x.com/m.m3u8", "kind": "hls" })).unwrap().hls);
         assert_eq!(Job::from_message(&json!({ "url": "javascript:alert(1)" })), None);
         assert_eq!(Job::from_message(&json!({ "filename": "a" })), None);
         assert!(Job::from_message(&json!({ "url": "https://x.com/a" })).unwrap().headers().is_empty());
@@ -259,6 +357,33 @@ mod tests {
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0].filename, "a.zip");
         assert!(take(&dir).is_empty(), "taken once");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_host_answers_a_ping_and_refuses_a_bad_link() {
+        let dir = std::env::temp_dir();
+        let pong = answer(&dir, &json!({ "cmd": "ping" }));
+        assert_eq!(pong["ok"], true);
+        assert_eq!(pong["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(answer(&dir, &json!({ "cmd": "variants", "url": "file:///etc/passwd" }))["ok"], false);
+        assert_eq!(answer(&dir, &json!({ "url": "ftp://x/a" }))["ok"], false);
+    }
+
+    #[test]
+    fn every_extension_file_is_carried_and_installed() {
+        let mut on_disk: Vec<String> =
+            fs::read_dir("extension").unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')).collect();
+        let mut carried: Vec<String> = EXTENSION.iter().map(|(name, _)| name.to_string()).collect();
+        on_disk.sort();
+        carried.sort();
+        assert_eq!(on_disk, carried, "a file in extension/ the app does not carry");
+
+        let dir = std::env::temp_dir().join(format!("lanes-ext-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        install_extension(&dir).unwrap();
+        assert_eq!(fs::read(extension_dir(&dir).join("manifest.json")).unwrap(), EXTENSION[0].1);
+        install_extension(&dir).unwrap();
         fs::remove_dir_all(&dir).unwrap();
     }
 

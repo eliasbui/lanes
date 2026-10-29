@@ -18,6 +18,7 @@
       }
       h1 { font-size: 15px; margin: 0 0 12px; }
       .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .gap { margin-top: 10px; }
       .muted { opacity: 0.65; font-size: 12px; margin-top: 10px; }
       /* A small switch, in Lanes' blue. */
       .switch { position: relative; width: 42px; height: 25px; flex: none; }
@@ -37,7 +38,15 @@
         <span class="track"></span>
       </span>
     </div>
-    <p class="muted" id="hint">Bấm chuột phải vào một liên kết và chọn "Tải bằng Lanes" để tải thủ công.</p>
+    <div class="row gap">
+      <label for="videoButton">Hiện nút tải trên video</label>
+      <span class="switch">
+        <input type="checkbox" id="videoButton" />
+        <span class="track"></span>
+      </span>
+    </div>
+    <p class="muted" id="hint">Bấm chuột phải vào một liên kết hoặc video và chọn "Tải bằng Lanes" để tải thủ công.</p>
+    <p class="muted" id="status" role="status">Đang kiểm tra kết nối với Lanes…</p>
     <script src="popup.js"></script>
   </body>
 </html>

@@ -16,6 +16,8 @@ gh auth status >/dev/null 2>&1 || { echo "sign in to GitHub first: gh auth login
 [ "${NO_WINDOWS:-}" = 1 ] || CHECK=1 scripts/package-windows.sh
 
 sed -i.bak "1,/^version = /s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml && rm Cargo.toml.bak
+# The extension the app carries goes up with it, so a browser loading it unpacked takes the new service worker too.
+sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" extension/manifest.json && rm extension/manifest.json.bak
 cargo update --workspace --offline -q 2>/dev/null || true
 
 # Built and tested before anything is pushed, so a broken build never leaves a tag behind.
@@ -30,7 +32,7 @@ if [ "${NO_WINDOWS:-}" != 1 ]; then
     WINZIP="dist/Lanes-$VERSION-windows-x64.zip"
 fi
 
-git diff --quiet Cargo.toml Cargo.lock || git commit -q -m "Release $VERSION" Cargo.toml Cargo.lock
+git diff --quiet Cargo.toml Cargo.lock extension/manifest.json || git commit -q -m "Release $VERSION" Cargo.toml Cargo.lock extension/manifest.json
 git tag "v$VERSION"
 git push origin HEAD "v$VERSION"
 

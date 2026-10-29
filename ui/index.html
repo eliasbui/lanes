@@ -394,6 +394,15 @@
         </div>
 
         <div class="group">
+          <label for="extPath">Tiện ích trình duyệt</label>
+          <div class="folder">
+            <input id="extPath" type="text" readonly spellcheck="false" />
+            <button class="mini" id="extOpen">Mở thư mục</button>
+          </div>
+          <p class="hint">Chrome, Edge, Brave, Cốc Cốc: mở trang Tiện ích, bật Chế độ nhà phát triển rồi kéo thư mục này vào trang đó (hoặc bấm "Tải tiện ích đã giải nén" và chọn nó). Tiện ích chuyển mọi download sang Lanes và thêm nút "Tải video" trên các video. Lanes tự cập nhật thư mục này cùng app.</p>
+        </div>
+
+        <div class="group">
           <div class="rowline">
             <span class="version">Phiên bản <span id="version">—</span></span>
             <button class="mini" id="checkUpdate">Kiểm tra cập nhật</button>
@@ -569,6 +578,7 @@
         call("set_autostart", { on: $("autostart").checked }).then((on) => ($("autostart").checked = !!on)).catch(() => {})
       );
       $("checkUpdate").addEventListener("click", () => { call("check_update"); toast("Đang kiểm tra bản mới…"); });
+      $("extOpen").addEventListener("click", () => call("reveal_extension").catch(toast));
 
       // Update banner.
       $("bannerBtn").addEventListener("click", () => {
@@ -593,6 +603,7 @@
           $("connsVal").textContent = d.settings.connections;
           $("folder").value = d.settings.download_dir;
           $("autostart").checked = d.autostart;
+          $("extPath").value = d.extension_dir;
         },
         list: render,
         toast,

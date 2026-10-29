@@ -11,14 +11,16 @@
 //! ponytail: equal split, add IDM-style "split the largest remaining segment when a connection goes idle" when the
 //! speed-up over a plain equal split is worth the extra bookkeeping.
 
+use crate::hls;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs,
     io::Read,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
@@ -251,6 +253,8 @@ pub struct Task {
     sources: Mutex<Vec<String>>,
     /// Referer, Cookie and User-Agent from the page, so a site that checks them serves the same file.
     headers: Vec<(String, String)>,
+    /// An HLS video: `url` is its playlist, and the segments are joined into the file (`run_hls`).
+    hls: bool,
     state: AtomicU8,
     downloaded: AtomicU64,
     total: AtomicU64,
@@ -326,8 +330,8 @@ impl Engine {
 
     /// Starts a fresh download, or picks up one left half-done from a sidecar beside `final_path`. `sources` is the
     /// mirror pool for net-merge, the primary first (a one-item list is an ordinary download). The headers are the
-    /// ones the browser carried, replayed on every connection.
-    pub fn start(self: &Arc<Self>, id: i64, sources: Vec<String>, final_path: PathBuf, headers: Vec<(String, String)>) {
+    /// ones the browser carried, replayed on every connection. `hls` marks the URL as an HLS playlist.
+    pub fn start(self: &Arc<Self>, id: i64, sources: Vec<String>, final_path: PathBuf, headers: Vec<(String, String)>, hls: bool) {
         let url = sources.first().cloned().unwrap_or_default();
         let resume = load_meta(&final_path).filter(|m| m.url == url);
         let task = Arc::new(Task {
@@ -336,6 +340,7 @@ impl Engine {
             final_path: final_path.clone(),
             sources: Mutex::new(sources),
             headers,
+            hls,
             state: AtomicU8::new(state::RUNNING),
             downloaded: AtomicU64::new(resume.as_ref().map(Meta::done).unwrap_or(0)),
             total: AtomicU64::new(resume.as_ref().and_then(|m| m.size).unwrap_or(0)),
@@ -376,8 +381,7 @@ impl Engine {
         }
         if delete_files {
             if let Some(task) = task {
-                let _ = fs::remove_file(part_of(&task.final_path));
-                let _ = fs::remove_file(meta_of(&task.final_path));
+                discard(&task.final_path);
             }
         }
     }
@@ -393,6 +397,9 @@ impl Engine {
     /// The manager thread of one download: probe, open and size the part file, fan out one thread per segment,
     /// save progress while they run, then put the finished file in place.
     fn run(&self, task: Arc<Task>, resume: Option<Meta>) {
+        if task.hls {
+            return self.run_hls(&task);
+        }
         let probe = match resume.as_ref() {
             // A resume trusts the sidecar; it checked the URL already, and re-probing could change the segments.
             Some(meta) => Probe {
@@ -504,6 +511,170 @@ impl Engine {
         let _ = fs::remove_file(meta_of(&task.final_path));
         task.state.store(state::DONE, Ordering::SeqCst);
     }
+
+    /// An HLS video (src/hls.rs): the segments of its playlist, several at a time, each kept as a numbered file in a
+    /// folder beside the final file so a resume skips the ones already there; then joined in order into the file.
+    /// The size shown is an estimate from the segments so far until the join gives the real one.
+    fn run_hls(&self, task: &Task) {
+        let media = match hls::load(&task.url, &task.headers) {
+            Ok(media) => media,
+            Err(e) => return task.set_error(e),
+        };
+        let folder = part_of(&task.final_path);
+        if let Err(e) = fs::create_dir_all(&folder) {
+            return task.set_error(format!("Không tạo được thư mục tạm: {e}"));
+        }
+        let count = media.segments.len();
+        let workers = self.connection_count().min(count);
+        if let Ok(mut slot) = task.segments.lock() {
+            *slot = (0..workers).map(|_| Arc::new(AtomicU64::new(0))).collect();
+        }
+        task.downloaded.store(0, Ordering::Relaxed);
+        let keys = Mutex::new(HashMap::new());
+        let mut parts = Vec::with_capacity(count + 1);
+        if let Some(init) = &media.init {
+            let path = folder.join("init");
+            if let Err(e) = keep_part(task, init, &path, &keys) {
+                return task.set_error(e);
+            }
+            parts.push(path);
+        }
+        parts.extend((0..count).map(|i| folder.join(format!("{i:06}"))));
+
+        let next = AtomicUsize::new(0);
+        let (kept, finished) = (AtomicU64::new(0), AtomicU64::new(0));
+        let first = parts.len() - count;
+        let all_ok = thread::scope(|scope| {
+            let worker = || loop {
+                let i = next.fetch_add(1, Ordering::SeqCst);
+                let Some(segment) = media.segments.get(i) else { return true };
+                match keep_part(task, segment, &parts[first + i], &keys) {
+                    Ok(size) => {
+                        let kept = kept.fetch_add(size, Ordering::Relaxed) + size;
+                        let finished = finished.fetch_add(1, Ordering::Relaxed) + 1;
+                        task.total.store(kept / finished * count as u64, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        if !task.paused_or_removed() {
+                            task.set_error(e);
+                        }
+                        return false;
+                    }
+                }
+            };
+            let handles: Vec<_> = (0..workers).map(|_| scope.spawn(worker)).collect();
+            handles.into_iter().all(|h| h.join().unwrap_or(false))
+        });
+        if !all_ok || task.paused_or_removed() {
+            return;
+        }
+        match join_parts(&parts, &folder, &task.final_path) {
+            Ok(size) => {
+                task.total.store(size, Ordering::Relaxed);
+                task.downloaded.store(size, Ordering::Relaxed);
+                let _ = fs::remove_dir_all(&folder);
+                task.state.store(state::DONE, Ordering::SeqCst);
+            }
+            Err(e) => task.set_error(format!("Không ghép được video: {e}")),
+        }
+    }
+}
+
+/// Deletes what a download left beside its file: the part file or, for HLS, the folder of segments, and the sidecar.
+pub fn discard(final_path: &Path) {
+    let part = part_of(final_path);
+    let _ = fs::remove_file(&part);
+    let _ = fs::remove_dir_all(&part);
+    let _ = fs::remove_file(meta_of(final_path));
+}
+
+/// One HLS segment, or the init part, into its own file: kept as it is when a resume finds it there, otherwise
+/// fetched with retries and decrypted when the playlist gives it a key. Gives the file's size.
+fn keep_part(task: &Task, segment: &hls::Segment, path: &Path, keys: &Mutex<HashMap<String, Vec<u8>>>) -> Result<u64, String> {
+    if let Ok(meta) = fs::metadata(path) {
+        task.downloaded.fetch_add(meta.len(), Ordering::Relaxed);
+        return Ok(meta.len());
+    }
+    let mut attempt = 0;
+    loop {
+        if task.paused_or_removed() {
+            return Err("Đã dừng".into());
+        }
+        let fetched = fetch_counted(task, segment).and_then(|body| match &segment.key {
+            Some(key) => hls::decrypt(&key_bytes(task, &key.url, keys)?, key.iv.unwrap_or_else(|| hls::sequence_iv(segment.sequence)), body),
+            None => Ok(body),
+        });
+        match fetched {
+            Ok(body) => {
+                let tmp = path.with_extension("tmp");
+                fs::write(&tmp, &body).and_then(|()| fs::rename(&tmp, path)).map_err(|e| format!("Không ghi được tệp: {e}"))?;
+                return Ok(body.len() as u64);
+            }
+            Err(e) => {
+                attempt += 1;
+                if attempt > RETRIES {
+                    return Err(e);
+                }
+                for _ in 0..(attempt.min(6) * 5) {
+                    if task.paused_or_removed() {
+                        return Err("Đã dừng".into());
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+    }
+}
+
+/// The body of one HLS part, counted into the progress as it arrives; what was counted is taken back on a failure.
+fn fetch_counted(task: &Task, segment: &hls::Segment) -> Result<Vec<u8>, String> {
+    let mut reader = hls::open(&segment.url, segment.range, &task.url, &task.headers)?;
+    let mut body = Vec::new();
+    let mut buf = vec![0u8; CHUNK];
+    let result = loop {
+        if task.paused_or_removed() {
+            break Err("Đã dừng".to_owned());
+        }
+        match reader.read(&mut buf) {
+            Ok(0) => break Ok(()),
+            Ok(n) => {
+                body.extend_from_slice(&buf[..n]);
+                task.downloaded.fetch_add(n as u64, Ordering::Relaxed);
+            }
+            Err(e) => break Err(format!("Kết nối bị gián đoạn: {e}")),
+        }
+    };
+    if let Err(e) = result {
+        task.downloaded.fetch_sub(body.len() as u64, Ordering::Relaxed);
+        return Err(e);
+    }
+    Ok(body)
+}
+
+/// The AES-128 key at `url`, fetched once per download and shared by every segment it locks.
+fn key_bytes(task: &Task, url: &str, keys: &Mutex<HashMap<String, Vec<u8>>>) -> Result<Vec<u8>, String> {
+    let mut keys = keys.lock().map_err(|_| "Khóa giải mã bị lỗi".to_owned())?;
+    if let Some(key) = keys.get(url) {
+        return Ok(key.clone());
+    }
+    let mut key = Vec::new();
+    hls::open(url, None, &task.url, &task.headers)?.take(64).read_to_end(&mut key).map_err(|e| format!("Không tải được khóa giải mã: {e}"))?;
+    keys.insert(url.to_owned(), key.clone());
+    Ok(key)
+}
+
+/// The parts in order into one file inside `folder`, then moved to `final_path`. Gives the file's size.
+fn join_parts(parts: &[PathBuf], folder: &Path, final_path: &Path) -> std::io::Result<u64> {
+    let joined = folder.join("joined");
+    let mut out = fs::File::create(&joined)?;
+    let mut size = 0;
+    for part in parts {
+        size += std::io::copy(&mut fs::File::open(part)?, &mut out)?;
+    }
+    out.sync_all()?;
+    drop(out);
+    fs::rename(&joined, final_path)?;
+    Ok(size)
 }
 
 /// Opens the part file and grows it to the full size so every connection can write its own stretch at once.
@@ -601,7 +772,7 @@ fn download_segment(task: &Task, file: &fs::File, segment: Segment, done: &Atomi
     }
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(SECONDS))
         .timeout_read(Duration::from_secs(SECONDS))
@@ -795,6 +966,126 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A local server answering GET by path from `files`, so the HLS path runs without the network.
+    fn serve(files: Vec<(&'static str, Vec<u8>)>) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let files = Arc::new(files);
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let files = files.clone();
+                thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut request = String::new();
+                    let _ = reader.read_line(&mut request);
+                    let path = request.split_whitespace().nth(1).unwrap_or("/").to_owned();
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+                        line.clear();
+                    }
+                    let (status, body) = match files.iter().find(|(p, _)| *p == path) {
+                        Some((_, body)) => ("200 OK", body.clone()),
+                        None => ("404 Not Found", Vec::new()),
+                    };
+                    let mut stream = stream;
+                    let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                    let _ = stream.write_all(&body);
+                });
+            }
+        });
+        base
+    }
+
+    /// An HLS video through its master: plain and AES-128 segments, the second key run taking its IV from the
+    /// sequence number, fetched in parallel and joined in order into one file, with the segment folder gone after.
+    #[test]
+    fn an_hls_video_is_fetched_decrypted_and_joined() {
+        use cbc::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
+        let key = [9u8; 16];
+        let lock = |plain: &[u8], iv: [u8; 16]| {
+            let mut buf = plain.to_vec();
+            buf.resize(plain.len() + 16, 0);
+            let len = cbc::Encryptor::<aes::Aes128>::new(&key.into(), &iv.into()).encrypt_padded_mut::<Pkcs7>(&mut buf, plain.len()).unwrap().len();
+            buf.truncate(len);
+            buf
+        };
+        let parts: Vec<Vec<u8>> = (0..4u8).map(|i| vec![b'a' + i; 1000 + i as usize * 333]).collect();
+        let explicit = [3u8; 16];
+        let media = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:5\n#EXTINF:2,\ns0.ts\n\
+            #EXT-X-KEY:METHOD=AES-128,URI=\"/key\",IV=0x03030303030303030303030303030303\n#EXTINF:2,\ns1.ts\n\
+            #EXT-X-KEY:METHOD=AES-128,URI=\"/key\"\n#EXTINF:2,\ns2.ts\n#EXTINF:2,\ns3.ts\n#EXT-X-ENDLIST\n";
+        let base = serve(vec![
+            ("/master.m3u8", b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=2x2\nv/media.m3u8\n".to_vec()),
+            ("/v/media.m3u8", media.as_bytes().to_vec()),
+            ("/key", key.to_vec()),
+            ("/v/s0.ts", parts[0].clone()),
+            ("/v/s1.ts", lock(&parts[1], explicit)),
+            ("/v/s2.ts", lock(&parts[2], hls::sequence_iv(7))),
+            ("/v/s3.ts", lock(&parts[3], hls::sequence_iv(8))),
+        ]);
+
+        let dir = std::env::temp_dir().join(format!("lanes-hls-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("video.ts");
+        let engine = Arc::new(Engine::new());
+        engine.set_connections(3);
+        engine.start(1, vec![format!("{base}/master.m3u8")], path.clone(), Vec::new(), true);
+        let snap = loop {
+            let snap = engine.snapshots().into_iter().next().expect("the task is listed");
+            match snap.state {
+                state::DONE => break snap,
+                state::ERROR => panic!("hls failed: {}", snap.error),
+                _ => thread::sleep(Duration::from_millis(50)),
+            }
+        };
+        assert_eq!(fs::read(&path).unwrap(), parts.concat());
+        assert_eq!(snap.size, Some(parts.concat().len() as u64));
+        assert!(!part_of(&path).exists(), "the segment folder is removed");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// HLS over the network: the smallest resolution of a public MPEG-TS stream and of a fragmented-MP4 one cut into
+    /// byte ranges, each joined into a file that starts as its container should. Run with
+    /// `cargo test -- --ignored hls_from`.
+    #[test]
+    #[ignore = "needs the network"]
+    fn hls_from_the_network_makes_whole_files() {
+        let streams = [
+            ("https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", "ts"),
+            ("https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8", "mp4"),
+        ];
+        let dir = std::env::temp_dir().join(format!("lanes-hls-net-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let engine = Arc::new(Engine::new());
+        engine.set_connections(8);
+        for (id, (master, ext)) in streams.into_iter().enumerate() {
+            let choices = hls::choices(master, &[]).unwrap();
+            assert_eq!(choices.ext, ext);
+            let smallest = choices.variants.last().unwrap().url.clone();
+            let path = dir.join(format!("{id}.{ext}"));
+            engine.start(id as i64, vec![smallest], path.clone(), Vec::new(), true);
+            loop {
+                let snap = engine.snapshots().into_iter().find(|s| s.id == id as i64).unwrap();
+                match snap.state {
+                    state::DONE => break,
+                    state::ERROR => panic!("{master}: {}", snap.error),
+                    _ => thread::sleep(Duration::from_millis(200)),
+                }
+            }
+            let bytes = fs::read(&path).unwrap();
+            eprintln!("{master}: {} bytes", bytes.len());
+            if ext == "ts" {
+                assert!(bytes.len() > 188 * 100 && bytes.iter().step_by(188).take(100).all(|&b| b == 0x47), "MPEG-TS packets");
+            } else {
+                assert_eq!(&bytes[4..8], b"ftyp", "an MP4 starts with its ftyp box");
+            }
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// net-merge over the network: the same file given as two mirrors downloads whole, its segments spread over both
     /// sources and written into one file that matches the published hash. Ignored by default since it needs the net;
     /// run with `cargo test -- --ignored net_merge`.
@@ -811,7 +1102,7 @@ mod tests {
 
         let engine = std::sync::Arc::new(Engine::new());
         engine.set_connections(8);
-        engine.start(1, vec![url.clone(), url], path.clone(), Vec::new());
+        engine.start(1, vec![url.clone(), url], path.clone(), Vec::new(), false);
         loop {
             let snap = engine.snapshots().into_iter().next().expect("the task is listed");
             assert!(snap.sources >= 1);
