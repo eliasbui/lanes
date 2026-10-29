@@ -26,8 +26,12 @@ PATH="$LLVM:$LLD:$PATH"
 RUSTFLAGS="-C target-feature=+crt-static -C link-arg=/ignore:4099" \
     cargo xwin build --release --locked --target x86_64-pc-windows-msvc
 OUT=${CARGO_TARGET_DIR:-target}/x86_64-pc-windows-msvc/release
-cp "$OUT/lanes.exe" "$OUT/Lanes.exe"
+# Staged in a folder of its own, so the capitalised name is kept even on a case-insensitive Mac disk where
+# Lanes.exe and lanes.exe would otherwise be the same file.
+STAGE=$(mktemp -d)
+cp "$OUT/lanes.exe" "$STAGE/Lanes.exe"
 mkdir -p dist
 rm -f "dist/$ZIP"
-zip -qj "dist/$ZIP" "$OUT/Lanes.exe"
+zip -qj "dist/$ZIP" "$STAGE/Lanes.exe"
+rm -rf "$STAGE"
 echo "dist/$ZIP"
