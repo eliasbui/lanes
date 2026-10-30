@@ -620,7 +620,7 @@
           left: "còn {0}", conns: "Số kết nối mỗi tệp", nConns: "{0} kết nối", nLinks: "{0} đường mạng", nSources: "{0} nguồn",
           seconds: "{0} giây", minutes: "{0} phút", hours: "{0} giờ",
           queued: "Đang chờ", waitsUntil: "Chờ tới {0}", paused: "Tạm dừng", failed: "Tải thất bại",
-          pause: "Tạm dừng", resume: "Tiếp tục", reveal: mac ? "Hiện trong Finder" : "Mở thư mục chứa", remove: "Xóa khỏi danh sách", open: "Mở",
+          pause: "Tạm dừng", resume: "Tiếp tục", reveal: mac ? "Hiện trong Finder" : "Mở thư mục chứa", revealLs: "Hiện trong LazySpace", remove: "Xóa khỏi danh sách", open: "Mở",
           copy: "Sao chép liên kết", copied: "Đã sao chép liên kết", copyFailed: "Không sao chép được liên kết",
           emptyNone: "Chưa có gì tải", emptyNoneText: "Dán một liên kết, hoặc tải từ trình duyệt qua tiện ích Lanes.",
           emptyView: "Không có mục nào", emptyViewText: "Mục này đang trống.", noResults: "Không có kết quả", noResultsText: 'Không có tệp nào khớp "{0}".',
@@ -662,7 +662,7 @@
           left: "{0} left", conns: "Connections per file", nConns: "{0} connections", nLinks: "{0} network links", nSources: "{0} sources",
           seconds: "{0} s", minutes: "{0} min", hours: "{0} h",
           queued: "Waiting", waitsUntil: "Waits until {0}", paused: "Paused", failed: "Failed",
-          pause: "Pause", resume: "Resume", reveal: mac ? "Show in Finder" : "Show in Folder", remove: "Remove from List", open: "Open",
+          pause: "Pause", resume: "Resume", reveal: mac ? "Show in Finder" : "Show in Folder", revealLs: "Show in LazySpace", remove: "Remove from List", open: "Open",
           copy: "Copy Link", copied: "Link copied", copyFailed: "Could not copy the link",
           emptyNone: "Nothing downloaded yet", emptyNoneText: "Paste a link, or download from the browser through the Lanes extension.",
           emptyView: "Nothing here", emptyViewText: "This list is empty.", noResults: "No results", noResultsText: 'No file matches "{0}".',
@@ -789,6 +789,7 @@
       // The queue's start time (seconds since 1970, 0 for none) and the speed limit, as the app keeps them.
       let startAt = 0;
       let speedLimit = 0;
+      let hasLazyspace = false;
       let lastNet = null;
       const waiting = () => startAt * 1000 > Date.now();
       const two = (n) => String(n).padStart(2, "0");
@@ -919,7 +920,7 @@
         if (!it) return;
         if (name === "remove") call("remove", { id: it.id, delete: false });
         else if (name === "copy") copy(it.url);
-        else call(name, { id: it.id }).catch(toast);
+        else call(name === "revealLs" ? "reveal_lazyspace" : name, { id: it.id }).catch(toast);
       }
       function select(id) {
         selected = id;
@@ -949,6 +950,7 @@
         const entries = [];
         if (it.state === DONE) entries.push("open");
         entries.push("reveal");
+        if (hasLazyspace && it.state === DONE) entries.push("revealLs");
         if (it.state === RUNNING || it.state === QUEUED) entries.push("pause");
         if (it.state === PAUSED || it.state === ERROR) entries.push("resume");
         entries.push("copy", null, "remove");
@@ -1214,6 +1216,7 @@
           $("netMerge").checked = !!s.net_merge;
           $("extPath").value = d.extension_dir;
           $("maxActive").value = String(s.max_active ?? 3);
+          hasLazyspace = !!d.lazyspace;
           speedLimit = s.speed_limit || 0;
           $("speedLimit").value = String(speedLimit);
           $("whenDone").value = s.when_done || "";

@@ -823,6 +823,7 @@ impl App {
                     "autostart": autostart::enabled(),
                     "max_connections": engine::MAX_CONNECTIONS,
                     "extension_dir": browser::extension_dir(&self.dir),
+                    "lazyspace": lazyspace_app().is_some(),
                 }}));
                 self.push_list();
                 self.page_ready = true;
@@ -890,6 +891,7 @@ impl App {
             }
             "open" => reply(self, self.file_of(num("id")).and_then(|p| open_path(&p))),
             "reveal" => reply(self, self.file_of(num("id")).and_then(|p| reveal(&p))),
+            "reveal_lazyspace" => reply(self, self.file_of(num("id")).and_then(|p| reveal_in_lazyspace(&p))),
             "reveal_extension" => reply(self, reveal(&browser::extension_dir(&self.dir))),
             "open_url" => {
                 if let Some(url) = args["url"].as_str() {
@@ -1230,6 +1232,26 @@ fn reveal(path: &Path) -> Result<Value, String> {
     } else {
         open_path(path.parent().unwrap_or(path))
     }
+}
+
+/// LazySpace, the file manager by the same author, when it is installed.
+fn lazyspace_app() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    [Some(PathBuf::from("/Applications")), home.map(|h| h.join("Applications"))]
+        .into_iter()
+        .flatten()
+        .map(|dir| dir.join("LazySpace.app"))
+        .find(|app| app.exists())
+}
+
+/// Shows a file in LazySpace with it selected: LazySpace takes the path as macOS hands it a file to open
+/// (`Event::Opened`), a folder in a new tab and anything else in its folder.
+fn reveal_in_lazyspace(path: &Path) -> Result<Value, String> {
+    let app = lazyspace_app().ok_or("Chưa cài LazySpace")?;
+    cmd("/usr/bin/open").args(["-a".as_ref(), app.as_os_str(), path.as_os_str()]).spawn().map(|_| Value::Null).map_err(|e| e.to_string())
 }
 
 /// The RGBA pixels and side of a PNG icon.
