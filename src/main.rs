@@ -862,14 +862,18 @@ impl App {
             "remove" => {
                 let id = num("id");
                 let delete = args["delete"].as_bool().unwrap_or(false);
+                let row = store::get(&self.db, id).ok().flatten();
+                // The file goes first: when it cannot be moved, the download stays in the list so the user sees why.
+                if let (true, Some(row)) = (delete, &row) {
+                    if let Err(e) = to_trash(&row.final_path()) {
+                        return reply(self, Err(e));
+                    }
+                }
                 self.engine.remove(id, true);
-                if let Ok(Some(row)) = store::get(&self.db, id) {
+                if let Some(row) = &row {
                     // A download that is not running (paused before a restart) is not in the engine, so its part file
                     // or folder of segments is cleared here.
                     engine::discard(&row.final_path());
-                    if delete {
-                        let _ = std::fs::remove_file(row.final_path());
-                    }
                 }
                 let _ = store::remove(&self.db, id);
                 self.push_list();
@@ -1221,6 +1225,22 @@ fn open_path(path: &Path) -> Result<Value, String> {
         cmd("xdg-open")
     };
     command.arg(path.as_os_str()).spawn().map(|_| Value::Null).map_err(|e| e.to_string())
+}
+
+/// Moves a finished file to the Trash or Recycle Bin, where it can still be put back; a file already gone is fine.
+fn to_trash(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    #[allow(unused_mut)]
+    let mut trash = trash::TrashContext::default();
+    // Through NSFileManager rather than Finder, which would ask for permission to control Finder first.
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        trash.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    trash.delete(path).map_err(|e| format!("{} {e}", tr("Không chuyển được vào Thùng rác:", "Could not move to the Trash:")))
 }
 
 /// Shows a file in Finder or Explorer, selected.

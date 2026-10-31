@@ -43,6 +43,8 @@ sha1 = "0.10"
 base64 = "0.22"
 # The Downloads folder and the home, wherever the system keeps them.
 dirs = "7"
+# Deleting a finished download moves it to the Trash or Recycle Bin, where it can still be put back.
+trash = "5"
 # The tray and window icons are decoded from PNG at startup.
 png = "0.18"
 
